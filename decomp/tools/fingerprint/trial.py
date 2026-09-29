@@ -37,6 +37,9 @@ CANDIDATES = {
     "f4_tablecopy.c": "func_8005E938",
     "f5_constsynth.c": "func_8005F088",
     "f6_funcptr.c": "func_8005BAA0",
+    "f7_multclamp.c": "func_8001AFB8",
+    "f8_schedbranch.c": "func_80035330",
+    "f9_magicdiv.c": "func_8005D558",
 }
 
 # PE2-proven cc1 flag base (gcc 2.8.1 + PsyQ); -O level and -G vary per trial.
@@ -44,6 +47,12 @@ CC1_BASE = (
     "-mips1 -w -funsigned-char -fpeephole -ffunction-cse "
     "-fpcc-struct-return -fcommon -msoft-float -mgas -fgnu-linker -quiet"
 )
+
+# PE2 passes --expand-div to maspsx because its retail div sequences carry
+# the ASPSX zero-div/overflow trap sequences. SLUS_009.02's divs are bare
+# `div $zero,rs,rt; mflo` with no traps, so maspsx must run WITHOUT
+# --expand-div (it then rewrites 2-operand div to the trap-free 3-op form).
+EXPAND_DIV = False
 
 COMPILERS = {
     # name: (cc1 path, runner)  runner None = native, "docker" = via container
@@ -55,6 +64,10 @@ COMPILERS = {
 OPT_LEVELS = ["-O1", "-O2", "-O3"]
 G_LEVELS = ["-G0", "-G8"]
 ASPSX_VERSIONS = ["2.77", "2.81", "2.86"]
+
+# Docker-based compilers pay ~2s per container start; only run the combos
+# that matter for the report (the native compilers get the full matrix).
+DOCKER_COMBOS = [("-O2", "-G8"), ("-O3", "-G8")]
 
 
 def parse_original(func_name):
@@ -93,10 +106,15 @@ def normalize(insn):
     def num(m):
         return str(int(m.group(0), 0))
     insn = re.sub(r"0x[0-9a-fA-F]+|\b\d+\b", num, insn)
-    # objdump prints the `li` alias; spimdisasm prints addiu with zero
-    insn = re.sub(r"^li (\w+),(-?\d+)$", r"addiu \1, zero, \2", insn)
+    insn = re.sub(r"<[^>]*>", "", insn)  # objdump symbol annotation on targets
     insn = re.sub(r"\s*,\s*", ",", insn)
     insn = re.sub(r"\s+", " ", insn).strip()
+    # branch targets: label name vs hex address — both become LBL
+    if re.match(r"^(beq|bne|beqz|bnez|bgez|bgezal|bgtz|blez|bltz|bltzal)\b", insn):
+        insn = re.sub(r",[^,]+$", ",LBL", insn)
+    insn = re.sub(r"\.L\w+", "LBL", insn)
+    # objdump prints the `li` alias; spimdisasm prints addiu with zero
+    insn = re.sub(r"^li (\w+),(-?\d+)$", r"addiu \1,zero,\2", insn)
     return insn
 
 
@@ -128,10 +146,14 @@ def fix_flags_for_compiler(cc1, runner, flags):
         if not m:
             print(f"  !! cannot run {cc1}: {r.stderr.strip()[:200]}")
             return None
-        bad = m.group(1)
-        flags = [f for f in flags if f.lstrip("-") != bad.lstrip("-") and f != f"-{bad}"]
-        # cc1 reports e.g. `fgnu-linker' for -fgnu-linker
-        flags = [f for f in flags if f != f"-{bad}"]
+        bad = m.group(1).lstrip("-")
+        # cc1 reports e.g. `no-check-zero-division' for -mno-check-zero-division
+        before = len(flags)
+        flags = [f for f in flags
+                 if f.lstrip("-") not in (bad, "m" + bad, bad.removeprefix("m"))]
+        if len(flags) == before:
+            print(f"  !! {cc1}: cannot drop rejected option '{bad}'")
+            return None
 
 
 def compile_and_score(cc1, runner, base_flags, opt, g, aspsx_ver, verbose):
@@ -151,13 +173,15 @@ def compile_and_score(cc1, runner, base_flags, opt, g, aspsx_ver, verbose):
         if r.returncode != 0:
             return None
         out_o = WORK / (cfile.replace(".c", ".o"))
+        # NB: no --expand-div (see EXPAND_DIV note above); maspsx then emits
+        # the trap-free div form the retail binary uses.
         r = subprocess.run(
             [sys.executable, str(MASPSX),
-             f"--aspsx-version={aspsx_ver}", "--run-assembler", "--expand-div",
+             f"--aspsx-version={aspsx_ver}", "--run-assembler",
              f"--gnu-as-path={GNU_AS}",
              "-EL", opt, "-march=r3000", "-mtune=r3000", "-no-pad-sections",
              g, "-o", str(out_o), str(out_s)],
-            capture_output=True, text=True)
+            capture_output=True, text=True, stdin=subprocess.DEVNULL)
         if r.returncode != 0:
             if verbose:
                 print("maspsx failed:", r.stderr[:300])
@@ -221,9 +245,13 @@ def main():
             print(f"{cname}: flags reduced to: {fixed}")
         for opt in OPT_LEVELS:
             for g in G_LEVELS:
-                # pick best ASPSX version per (compiler,opt,g)
+                if runner == "docker" and (opt, g) not in DOCKER_COMBOS:
+                    continue
+                # pick best ASPSX version per (compiler,opt,g); docker runs
+                # only the reference version to keep container count sane
+                versions = ["2.77"] if runner == "docker" else ASPSX_VERSIONS
                 best = None
-                for ver in ASPSX_VERSIONS:
+                for ver in versions:
                     res = compile_and_score(cc1, runner, fixed, opt, g, ver, args.verbose)
                     if res is None:
                         continue

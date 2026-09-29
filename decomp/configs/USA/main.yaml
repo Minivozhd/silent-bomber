@@ -17,6 +17,7 @@ options:
   migrate_rodata_to_functions: True
   find_file_boundaries: False
   pair_rodata_to_text: False
+  gp_value: 0x800B5838
 
   o_as_suffix: False
   use_legacy_include_asm: False
@@ -30,7 +31,7 @@ options:
   undefined_funcs_auto_path: linkers/USA/undefined_funcs_auto.main.txt
   undefined_syms_auto_path: linkers/USA/undefined_syms_auto.main.txt
 
-  subalign: 4
+  subalign: 2
 
   string_encoding: ASCII
   data_string_encoding: ASCII
@@ -45,3 +46,10 @@ segments:
     type: code
     start: 0x800
     vram: 0x80010000
+    subsegments:
+      # First pass: everything as split asm. Ranges verified against the
+      # legacy bootstrap config (slus_009.02.yaml): text ends, data begins
+      # at 0x8A8F0 (VA 0x8009A0F0).
+      - [0x800, asm, 800]
+      - [0x8A8F0, data, 8A8F0]
+  - [0xCE000]

@@ -16,3 +16,7 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# fingerprint trial artifacts
+decomp/tools/fingerprint/work/
+decomp/tools/fingerprint/results.txt
