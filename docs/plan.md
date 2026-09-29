@@ -1,102 +1,102 @@
-# Silent Bomber (USA) — RE-проект: декомпиляция, мод-тулзы, рандомайзер
+# Silent Bomber (USA) — RE project: decompilation, mod tools, randomizer
 
-Аналогия — [GabeRealB/parasite-eve-2-decomp](https://github.com/GabeRealB/parasite-eve-2-decomp)
-(лежит локально в `tools/pe2-mod-tools/file-manager/experiments/decomp`, используем как референс
-структуры и тулчейна).
+Reference project: [GabeRealB/parasite-eve-2-decomp](https://github.com/GabeRealB/parasite-eve-2-decomp)
+(kept locally at `tools/pe2-mod-tools/file-manager/experiments/decomp`, used as the
+structure/toolchain template).
 
-## 1. Инвентарь образа (что достали и что это)
+## 1. Image inventory (extracted and identified)
 
-Образ: `Silent Bomber (USA).bin/.cue` (MODE2/2352, 145802 сектора). Конвертирован в
-`silent_bomber.iso` (2048-байтные сектора, скрипт в истории чата; перенесём в `tools/`).
+Source image: `Silent Bomber (USA).bin/.cue` (MODE2/2352, 145,802 sectors). Converted to
+`silent_bomber.iso` (2048-byte sectors; the converter moves to `tools/`).
 
-ISO9660-содержимое (всё выгружено):
+ISO9660 contents (all extracted):
 
-| Файл | Размер | Что это |
+| File | Size | What it is |
 |---|---|---|
-| `SYSTEM.CNF` | 60 B | Бут-конфиг: `BOOT=cdrom:\SLUS_009.02;1`, `STACK=801FFF00` |
-| `SLUS_009.02` | 843 776 B | **Главный исполняемый** (PS-X EXE) |
-| `DATA.BIN` | 22 904 832 B | Архив пакетов игры (~43 пакета, см. §3) |
-| `XA.BIN` | 131 072 000 B | XA-аудио (interleaved ADPCM стримы; играются стандартными плеерами) |
-| `STR.BIN` | 143 425 536 B | STR-видео (MDEC-ролики; сигнатура кадров `60 01 01 80` = MDEC) |
+| `SYSTEM.CNF` | 60 B | Boot config: `BOOT=cdrom:\SLUS_009.02;1`, `STACK=801FFF00` |
+| `SLUS_009.02` | 843,776 B | **Main executable** (PS-X EXE) |
+| `DATA.BIN` | 22,904,832 B | Game package archive (~43 packages, see §2) |
+| `XA.BIN` | 131,072,000 B | XA audio (interleaved ADPCM streams; playable by standard players) |
+| `STR.BIN` | 143,425,536 B | STR video (MDEC movies; frame sync `60 01 01 80`) |
 
-**`SLUS_009.02`** (единственный исполняемый на диске; оверлеи — внутри DATA.BIN):
+**`SLUS_009.02`** (the only executable on disc; overlays live inside DATA.BIN):
 
-- PS-X EXE: text @ `0x80010000`, размер 0xCD800 (841 728 B), entry `0x8008D620`,
-  stack `0x801FFFF0`, регион "for North America".
-- Первый сплит splat уже сделан: 67% (565 KB) распознано как код
-  (`decomp/slus_009.02.yaml`, авто-детект `gp_value = 0x800B5838`).
-- Компилятор: почти наверняка GCC 2.7.2/2.8.1 + PsyQ ~4.x (1999, CyberConnect2) —
-  точную версию подберём по кодгену (maspsx fingerprint, как у PE2: GCC 2.8.1).
+- PS-X EXE: text @ `0x80010000`, size `0xCD800` (841,728 B), entry `0x8008D620`,
+  stack `0x801FFFF0`, region "for North America".
+- First splat split done: 67% (565 KB) recognized as code
+  (`decomp/slus_009.02.yaml`, auto-detected `gp_value = 0x800B5838`).
+- Compiler: almost certainly GCC 2.7.2/2.8.1 + PsyQ ~4.x (1999, CyberConnect2) —
+  exact version to be determined by codegen fingerprinting (maspsx trials, as PE2: GCC 2.8.1).
 
-## 2. Пакеты внутри DATA.BIN (цели декомпиляции-оверлеи)
+## 2. Packages inside DATA.BIN (decompilation overlay targets)
 
-В exe найдена таблица имён пакетов (по 12 байт на имя, порядок обратный):
-`P00P.BIN`…`P27P.BIN` (36 шт), `A00P`…`A03P.BIN` (4), `ARENAP.BIN`, `DEMOP.BIN`,
-`ENDINGP.BIN` (+`DATA.BIN`,`XA.BIN`,`STR.BIN` ссылки). Имена лежат в exe рядом с
-таблицей указателей на runtime-дескрипторы.
+The exe holds a package name table (12 bytes per name, descending order):
+`P00P.BIN`…`P27P.BIN` (36), `A00P`…`A03P.BIN` (4), `ARENAP.BIN`, `DEMOP.BIN`,
+`ENDINGP.BIN` (plus `DATA.BIN`/`XA.BIN`/`STR.BIN` references). The names sit next to
+a table of pointers to runtime descriptor structs.
 
-- Назначение (предварительно): `Pxx` — пакеты игровых миров/миссий (P00–P27 ≈ 28+ уровней
-  и пр.), `A0x` — арены/боссы, `DEMOP` — аттракт-денька, `ENDINGP` — титры, `ARENAP` — арена.
-- Лоадер: функция @ `0x800127B4` открывает `DATA.BIN` (строка `0x8009A1C4`),
-  читает первые значения (gp+0x3AC/0x3B0/0x3B4).
-- Заголовок DATA.BIN: первые 3 u32 = `0xACC, 0x2B30, 0x4E20`.
-  Гипотеза №1: 0xACC = число записей таблицы (2732), таблица из 4-байтовых записей по
-  оффсету 0x80 — тогда конец таблицы ровно 0x2B30 (проверено арифметически: 0x80+2732*4 = 0x2B30),
-  но записи не выглядят как u32-оффсеты → таблица, скорее всего, **бит/ниббл-пакованная**
-  (в регионе 0x0C..0xACC доминируют нибблы 0/1/4/7 — дельта-кодирование оффсетов).
-  0x4E20 — старт региона пакетов (сжатые данные).
-- Пакеты почти наверняка сжаты (кастомная LZ-схема CC2). Разбор таблицы и декомпрессии —
-  отдельная задача-эксперимент по образцу наших pe2-экспериментов (Python-харнессы +
-  верификация рендерами/дампами).
+- Purpose (preliminary): `Pxx` = world/mission packages (P00–P27 ≈ 28+ levels etc.),
+  `A0x` = arenas/bosses, `DEMOP` = attract demo, `ENDINGP` = credits, `ARENAP` = arena.
+- Loader: function @ `0x800127B4` opens `DATA.BIN` (string `0x8009A1C4`),
+  reads the first values (gp+0x3AC/0x3B0/0x3B4).
+- DATA.BIN header: first 3 u32 = `0xACC, 0x2B30, 0x4E20`.
+  Hypothesis #1: 0xACC = table entry count (2732); a 4-byte-entry table at offset 0x80
+  would end exactly at 0x2B30 (verified arithmetically: 0x80+2732*4 = 0x2B30),
+  but entries do not look like u32 offsets → the table is most likely
+  **bit/nibble-packed** (the 0x0C..0xACC region is dominated by nibbles 0/1/4/7 —
+  delta-encoded offsets). 0x4E20 = start of the (compressed) package data region.
+- Packages are almost certainly compressed (custom CyberConnect2 LZ scheme).
+  Table + decompressor analysis is a dedicated experiment track in the PE2 style
+  (Python harnesses + render/dump verification).
 
-## 3. План работ
+## 3. Roadmap
 
-### Фаза 1. Декомпиляция (как у PE2)
+### Phase 1. Decompilation (PE2 style)
 
-1. **Репозиторий** `decomp/` (создан): `assets/USA/SLUS_009.02`, `slus_009.02.yaml`
-   (рабочий первичный сплит), `asm/`, `src/`, `linkers/USA/`, `tools/`.
-   Дальше — перегнать конфиг в форму PE2 (`configs/USA/main.yaml`, sym/rel файлы,
-   hasm-паттерн, Makefile, Dockerfile для тулчейна — взять из PE2-репо).
-2. **Тулчейн**: Docker (ubuntu + binutils-mipsel + gcc cross, как в PE2 Dockerfile),
-   splat 0.50 (venv готов), asm-differ, m2c, maspsx — скопировать/адаптировать из
+1. **Repository** `decomp/` (created): `assets/USA/SLUS_009.02`, `slus_009.02.yaml`
+   (working first split), `asm/`, `src/`, `linkers/USA/`, `tools/`.
+   Next: migrate the config to the PE2 shape (`configs/USA/main.yaml`, sym/rel files,
+   hasm pattern, Makefile, toolchain Dockerfile — taken from the PE2 repo).
+2. **Toolchain**: Docker (ubuntu + binutils-mipsel + gcc cross, per the PE2 Dockerfile),
+   splat 0.50 (venv ready), asm-differ, m2c, maspsx — copied/adapted from
    `experiments/decomp/tools/`.
-3. **Компилятор**: fingerprint-сверка кодгена (serpens/maspsx trial по 3–5 функциям).
-   Кандидаты: GCC 2.6.3 / 2.7.2 / 2.8.1 + PsyQ 3.6–4.5.
-4. **Рабочий процесс**: сплит → разметка границ TU в `subsegments` → m2c-заготовки →
-   матчинг функций → символы (`configs/USA/sym.main.txt`).
-5. **Оверлеи**: после вскрытия DATA.BIN-таблицы и декомпрессора — сплит каждого пакета
-   с кодом (P00–P27, A00–A03, ARENA/DEMO/ENDING) как overlay-конфиги
-   (шаблон `configs/USA/overlay.template.yaml` из PE2).
+3. **Compiler**: codegen fingerprint matching (maspsx trials over 3–5 functions).
+   Candidates: GCC 2.6.3 / 2.7.2 / 2.8.1 + PsyQ 3.6–4.5.
+4. **Workflow**: split → mark TU boundaries in `subsegments` → m2c scaffolding →
+   function matching → symbols (`configs/USA/sym.main.txt`).
+5. **Overlays**: once the DATA.BIN table and decompressor are cracked — split every
+   code-bearing package (P00–P27, A00–A03, ARENA/DEMO/ENDING) as overlay configs
+   (template `configs/USA/overlay.template.yaml` from PE2).
 
-### Фаза 2. Мод-тулзы (extract/reinsert)
+### Phase 2. Mod tools (extract/reinsert)
 
-1. **ISO-уровень**: конвертер bin↔iso (готов, перенести в `tools/`), патчер образа с
-   пересчётом ECC/EDC (взять `tools/pe2-mod-tools/file-manager/rom_patcher.py` за основу —
-   он уже умеет PSX ECC/EDC) + генератор ISO9660-тома для замены файлов целиком.
-2. **DATA.BIN-уровень**: разобрать таблицу (ниббл-пакинг?) и декомпрессор пакетов →
-   extractor с именами из exe + repacker (сохранение оффсетов/выравниваний, пересборка
-   таблицы). Критично для рандомайзера: замена пакетов должна не ломать секторные
-   оффсеты, либо нужна перепаковка с пересчётом таблицы.
-3. **Верификация**: эмуляторный прогон (duckstation/pcsx) на ключевых пакетах.
+1. **ISO level**: bin↔iso converter (done, moving to `tools/`), image patcher with
+   ECC/EDC recalculation (based on `tools/pe2-mod-tools/file-manager/rom_patcher.py` —
+   it already does PSX ECC/EDC) + an ISO9660 volume generator for whole-file replacement.
+2. **DATA.BIN level**: crack the table (nibble packing?) and the package decompressor →
+   extractor with names from the exe + repacker (preserve offsets/alignment, rebuild
+   the table). Critical for the randomizer: package replacement must not break sector
+   offsets, or the table must be fully recomputed.
+3. **Verification**: emulator runs (DuckStation/PCSX) on key packages.
 
-### Фаза 3. Рандомайзер (Randomized Silent Bomber)
+### Phase 3. Randomizer (Randomized Silent Bomber)
 
-Цели (уточнить по мере вскрытия форматов): таблицы дропа/апгрейдов оружия и чипов,
-расположение апгрейд-модулей на картах, параметры врагов/боссов, (опц.) состав волн на арене.
+Targets (refined as formats are cracked): weapon/chip drop tables, upgrade module
+placement on maps, enemy/boss stats, (optional) arena wave composition.
 
-1. Разобрать внутренние форматы пакетов (после Фазы 1.5): миссии, дроп, статы.
-2. Логика рандомизации + seed/лог (как в Randomized Eve II — смотреть `pe2randomizer/`).
-3. Вшивание через Фазу 2 (repack DATA.BIN + патч ISO).
+1. Decode the internal package formats (after Phase 1.5): missions, drops, stats.
+2. Randomization logic + seed/log (as in Randomized Eve II — see `pe2randomizer/`).
+3. Injection via Phase 2 (DATA.BIN repack + ISO patch).
 
-## 4. Открытые вопросы (по приоритету)
+## 4. Open questions (by priority)
 
-1. Формат таблицы DATA.BIN (ниббл-пакинг оффсетов?) + алгоритм декомпрессии пакетов.
-2. Точная версия компилятора/PsyQ (fingerprint).
-3. Содержимое пакетов P00–P27: код/данные/карты/модели (после декомпрессии).
-4. Структуры рандомизабельного контента (дроп/апгрейды/статы).
+1. DATA.BIN table format (nibble-packed offsets?) + package decompression algorithm.
+2. Exact compiler/PsyQ version (fingerprint).
+3. Contents of packages P00–P27: code/data/maps/models (after decompression).
+4. Randomizable content structures (drops/upgrades/stats).
 
-## 5. Локальные артефакты
+## 5. Local artifacts
 
-- `silent_bomber.iso` — конвертированный образ (работаем с ним).
-- `decomp/` — скелет декомп-проекта (первичный сплит выполнен: 67% кода).
-- `venv/` — python3.13 + splat 0.50, spimdisasm, rabbitizer (дизасм-харнессы).
+- `silent_bomber.iso` — converted image (working copy).
+- `decomp/` — decomp project skeleton (first split done: 67% code).
+- `venv/` — python3.13 + splat 0.50, spimdisasm, rabbitizer (disasm harnesses).
