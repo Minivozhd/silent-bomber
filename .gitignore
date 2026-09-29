@@ -1,0 +1,18 @@
+# Game content — never committed (you must own the game and dump it yourself)
+*.bin
+*.cue
+*.iso
+decomp/assets/
+
+# Local workspace
+venv/
+playground/
+
+# Build artifacts
+build/
+decomp/build/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store

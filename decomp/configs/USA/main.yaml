@@ -1,0 +1,47 @@
+name: Main Executable (SLUS_009.02)
+sha1: daf6c9b6771c724928aa8d158f973b181d7b8115
+options:
+  basename: main
+  target_path: assets/USA/SLUS_009.02
+  base_path: ../..
+  platform: psx
+  compiler: PSYQ
+
+  asm_path: asm/USA/main
+  src_path: src/main
+  build_path: build/USA
+  hasm_in_src_path: True
+
+  ld_script_path: linkers/USA/main.ld
+
+  migrate_rodata_to_functions: True
+  find_file_boundaries: False
+  pair_rodata_to_text: False
+
+  o_as_suffix: False
+  use_legacy_include_asm: False
+
+  asm_function_macro: glabel
+  asm_jtbl_label_macro: jlabel
+  asm_data_macro: dlabel
+  generate_asm_macros_files: False
+
+  section_order: [".rodata", ".text", ".data", ".sdata", ".sbss", ".bss"]
+  undefined_funcs_auto_path: linkers/USA/undefined_funcs_auto.main.txt
+  undefined_syms_auto_path: linkers/USA/undefined_syms_auto.main.txt
+
+  subalign: 4
+
+  string_encoding: ASCII
+  data_string_encoding: ASCII
+  rodata_string_guesser_level: 2
+  data_string_guesser_level: 2
+
+segments:
+  - name: header
+    type: header
+    start: 0x0
+  - name: main
+    type: code
+    start: 0x800
+    vram: 0x80010000
