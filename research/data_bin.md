@@ -109,11 +109,30 @@ w0 = part1 file offset
 w1 = part1 size          (SB-RLE stream; decompressed in place by func_80012AEC)
 w2 = align800(w1)        (delta: part2 file offset = w0 + w2)
 w3,w4,w5 = part2 sub-sizes (ONE raw read of w3+w4+w5 at w0+w2; [w3..w3+w4) gets a
-             fixup/processing pass func_80012D34→func_80019224)
-w6 = delta: part3 file offset = w0 + w2 + w6
+             registration pass func_80012D34→func_80019224)
+w6 = delta: part3 file offset = w0 + w2 + w6  (== align800(w3+w4+w5)) [VERIFIED]
 w7,w8 = part3 sub-sizes  (ONE raw read of w7+w8)
 package span = w2 + w6 + align800(w7+w8)   # consecutive descriptors chain exactly ✓
 ```
+
+### 3.1a part2 load layout & load addresses [VERIFIED]
+
+`func_80012E10` reads part2 to **0x800DD4F0** (`D_800B5BB8`, written once at boot
+at 0x8001015C from `func_8001243C` = const 0x800DD4F0; package arena top =
+0x801FF000). In RAM:
+
+```
+[0 .. w3)                header/strings + MIPS .text + rodata   (the live overlay)
+[w3 .. w3+w4)            registration records (func_80012D34 pass)
+[w3+w4 .. w3+w4+w7+w8)   part3 (QMD) — read OVER part2's w5 zone
+```
+
+So the w5 disc bytes are read-then-overwritten scratch (A00–A03: part3 < w5,
+a live w5 tail survives — unidentified). ARENAP is the one exception to the
+load address: its dedicated loader thread stores **0x801A0000** at thread+0x50
+(0x80017790). Both bases verified by disassembly and by j/jal target analysis
+against every overlay's code span. Per-package code extents and splat overlay
+configs: `decomp/configs/USA/overlays/` (README there has the full map).
 
 Pointer table **D_800AC9E8** (36 slots):
 - slots 0..27 → descriptors D_800AC568..D_800AC934 = **P00..P27**

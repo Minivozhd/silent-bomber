@@ -24,11 +24,11 @@ A reverse-engineering project for *Silent Bomber* (Sony PlayStation, USA,
 ```
 decomp/
   slus_009.02.yaml   splat configuration (first split done: 67% code)
-  configs/USA/       PE2-style splat configs (main.yaml)
+  configs/USA/       PE2-style splat configs (main.yaml, overlays/)
   linkers/USA/       linker scripts
   asm/               split output (disassembly)
   src/               decompiled C sources (to come)
-  tools/             project tooling (to come)
+  tools/             extract_packages.sh/.py + gen_overlay_configs.py
 docs/                reverse-engineering notes (see above)
 ```
 
