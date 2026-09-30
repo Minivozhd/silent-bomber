@@ -6,9 +6,11 @@
 #include <QWidget>
 #include <vector>
 
+#include "../formats/QmdModel.hpp"
 #include "../formats/TimImage.hpp"
 
 class ImageView;
+class ModelView;
 
 /// Viewport: shows a package part file. part1 bundles -> TIM gallery;
 /// other parts -> hex/info stub (model/level viewers land here later).
@@ -21,12 +23,15 @@ public:
 
 private:
     void showTimBundle(const QString& path);
+    void showQmdContainer(const QString& path);
 
     QListWidget* m_list = nullptr;
     ImageView* m_image = nullptr;
+    ModelView* m_model = nullptr;
     QLabel* m_info = nullptr;
     QSplitter* m_split = nullptr;
 
     std::vector<sb::TimImage> m_tims;
+    std::vector<sb::QmdBlock> m_blocks;
     std::vector<uint8_t> m_bytes;
 };

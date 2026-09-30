@@ -1,4 +1,5 @@
 #include "ViewportPanel.hpp"
+#include "ModelView.hpp"
 
 #include <QFileInfo>
 #include <QImageReader>
@@ -7,6 +8,8 @@
 #include <QPixmap>
 #include <QScrollArea>
 #include <QVBoxLayout>
+
+#include "../formats/QmdModel.hpp"
 
 // Simple image display with checkerboard background for alpha.
 class ImageView : public QWidget {
@@ -48,13 +51,22 @@ ViewportPanel::ViewportPanel(QWidget* parent) : QWidget(parent) {
     scroll->setWidget(view);
     scroll->setWidgetResizable(false);
     m_image = view;
+    m_model = new ModelView(m_split);
+    m_model->setVisible(false);
     m_split->addWidget(m_list);
     m_split->addWidget(scroll);
+    m_split->addWidget(m_model);
     m_split->setStretchFactor(1, 1);
     lay->addWidget(m_split);
 
     connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
-        if (row < 0 || row >= (int)m_tims.size()) return;
+        if (row < 0) return;
+        if (m_model->isVisible()) {
+            if (row >= (int)m_blocks.size()) return;
+            m_model->setModel(m_blocks[row].verts, m_blocks[row].faces);
+            return;
+        }
+        if (row >= (int)m_tims.size()) return;
         std::vector<uint8_t> rgba;
         sb::timToRgba(m_tims[row], rgba);
         QImage img(rgba.data(), m_tims[row].width, m_tims[row].height, QImage::Format_RGBA8888);
@@ -71,16 +83,23 @@ void ViewportPanel::showFile(const QString& path) {
 
     if (path.contains(".part1")) {
         showTimBundle(path);
+    } else if (path.contains(".part3")) {
+        showQmdContainer(path);
     } else {
         m_list->clear();
         m_tims.clear();
+        m_blocks.clear();
+        m_model->setVisible(false);
         m_info->setText(QFileInfo(path).fileName() +
-                        QString(" — %1 bytes (model/level viewers pending format research)").arg(raw.size()));
+                        QString(" — %1 bytes (mission-data viewer pending format research)").arg(raw.size()));
     }
 }
 
 void ViewportPanel::showTimBundle(const QString& path) {
     m_tims.clear();
+    m_blocks.clear();
+    m_model->setVisible(false);
+    m_image->setVisible(true);
     m_list->clear();
     auto offs = sb::findTims(m_bytes.data(), m_bytes.size());
     for (size_t o : offs) {
@@ -98,4 +117,28 @@ void ViewportPanel::showTimBundle(const QString& path) {
     }
     m_info->setText(QString("%1 — %2 TIM images").arg(QFileInfo(path).fileName()).arg(m_tims.size()));
     if (!m_tims.empty()) m_list->setCurrentRow(0);
+}
+
+void ViewportPanel::showQmdContainer(const QString& path) {
+    m_tims.clear();
+    m_model->clear();
+    m_list->clear();
+    m_blocks = sb::parseQmdContainer(m_bytes.data(), m_bytes.size());
+    for (const auto& b : m_blocks) {
+        QString label = QString::fromStdString(b.name);
+        if (b.simple)
+            label += QString(" — %1 verts, %2 tris").arg(b.verts.size()).arg(b.faces.size());
+        else
+            label += " — (complex block)";
+        m_list->addItem(label);
+    }
+    m_info->setText(QString("%1 — %2 QMD blocks").arg(QFileInfo(path).fileName()).arg(m_blocks.size()));
+    m_image->setVisible(false);
+    m_model->setVisible(true);
+    for (size_t i = 0; i < m_blocks.size(); ++i) {
+        if (m_blocks[i].simple && !m_blocks[i].verts.empty()) {
+            m_list->setCurrentRow((int)i);
+            break;
+        }
+    }
 }
