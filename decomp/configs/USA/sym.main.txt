@@ -1,0 +1,73 @@
+// SLUS_009.02 known symbols (research/data_bin.md).
+// Identity func_* entries pin names splat would auto-generate anyway;
+// data labels carry the semantics established by the DATA.BIN research.
+
+//================================================
+//=== .text — entry + boot
+//================================================
+_start                  = 0x8008D620; // type:func
+
+//================================================
+//=== .text — CD / ISO9660 layer
+//================================================
+func_800127B4           = 0x800127B4; // type:func
+func_800128E0           = 0x800128E0; // type:func
+func_80012930           = 0x80012930; // type:func
+func_800136A4           = 0x800136A4; // type:func
+func_80088610           = 0x80088610; // type:func
+func_80088690           = 0x80088690; // type:func
+func_8008B630           = 0x8008B630; // type:func
+func_8008B7D0           = 0x8008B7D0; // type:func
+
+//================================================
+//=== .text — SB-RLE decoder + package loaders
+//================================================
+func_80012AEC           = 0x80012AEC; // type:func
+func_80012BB0           = 0x80012BB0; // type:func
+func_80012D34           = 0x80012D34; // type:func
+func_80012E10           = 0x80012E10; // type:func
+func_80013000           = 0x80013000; // type:func
+func_800132D8           = 0x800132D8; // type:func
+func_80013428           = 0x80013428; // type:func
+func_80013588           = 0x80013588; // type:func
+func_8001243C           = 0x8001243C; // type:func
+func_80016538           = 0x80016538; // type:func
+func_80019224           = 0x80019224; // type:func
+
+//================================================
+//=== .rodata — strings
+//================================================
+aHexDigits              = 0x8009A1B0; // type:u32
+aDataBin                = 0x8009A1C4; // type:u32
+aSaveId                 = 0x8009A1D0; // type:u32
+aDemopBin               = 0x8009A3D8; // type:u32
+aEndingpBin             = 0x8009A3FC; // type:u32
+aArenapBin              = 0x8009A408; // type:u32
+aStrBin                 = 0x800B5858; // type:u32
+aXaBin                  = 0x800B5860; // type:u32
+aData                   = 0x800B5868; // type:u32
+
+//================================================
+//=== .data — DATA.BIN package descriptor tables
+//================================================
+desc_BootTim            = 0x800AC2E8; // type:u32 size:0x8
+desc_TimBundle0         = 0x800AC2F0; // type:u32 size:0x8
+desc_TimBundle1         = 0x800AC2F8; // type:u32 size:0x8
+desc_BootMain           = 0x800AC300; // type:u32 size:0x1C
+desc_Demop              = 0x800AC31C; // type:u32 size:0x24
+desc_Endingp            = 0x800AC340; // type:u32 size:0x24
+desc_Arenap             = 0x800AC364; // type:u32 size:0x24
+desc_GrpA               = 0x800AC448; // type:u32 size:0xC0
+desc_GrpB               = 0x800AC538; // type:u32 size:0xC0
+desc_Packages           = 0x800AC568; // type:u32
+desc_Arenas             = 0x800AC958; // type:u32
+packagePtrTable         = 0x800AC9E8; // type:u32 size:0x90
+
+//================================================
+//=== .sdata/.sbss — CD-layer + arena state (gp-relative)
+//================================================
+packageArenaBase        = 0x800B5BB8; // type:u32
+DATA_LBA                = 0x800B5BE4; // type:u32
+STR_LBA                 = 0x800B5BE8; // type:u32
+XA_LBA                  = 0x800B5BEC; // type:u32
+sndHandleTable          = 0x800B5C88; // type:u32 size:0x10

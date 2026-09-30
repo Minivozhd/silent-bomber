@@ -34,8 +34,24 @@ SHA1        := daf6c9b6771c724928aa8d158f973b181d7b8115
 ASFLAGS := -EL -march=r3000 -mtune=r3000 -no-pad-sections -Iinclude
 LDFLAGS := -EL -nostdlib --no-check-sections -Map $(BUILD)/main.map
 
-ASM_S := $(shell find asm/$(VERSION)/main -name '*.s' 2>/dev/null)
-OBJS  := $(patsubst %.s,$(BUILD)/%.s.o,$(ASM_S))
+# --- C pipeline (GCC 2.8.1-psx + ASPSX 2.77, -O2 -G8; cpp -> cc1 -> maspsx) --
+# See tools/fingerprint/README.md for how this combination was identified.
+# maspsx runs WITHOUT --expand-div (the retail divs are trap-free).
+CC1     := tools/compilers/macos/gcc-2.8.1-psx/cc1
+MASPSX  := tools/maspsx/maspsx.py
+CC1FLAGS := -O2 -G8 -mips1 -w -funsigned-char -fpeephole -ffunction-cse \
+            -fpcc-struct-return -fcommon -msoft-float -mgas -fgnu-linker -quiet
+CPPFLAGS := -Iinclude -D_LANGUAGE_C
+MASPSXFLAGS := --aspsx-version=2.77 --run-assembler --gnu-as-path=$(AS) \
+               --dont-force-G0 \
+               -EL -O2 -march=r3000 -mtune=r3000 -no-pad-sections -Iinclude -G8
+
+# asm/.../nonmatchings/ is compiled into the .c objects via INCLUDE_ASM,
+# never assembled directly.
+ASM_S := $(shell find asm/$(VERSION)/main -name '*.s' -not -path '*/nonmatchings/*' 2>/dev/null)
+SRC_C := $(shell find src/main -name '*.c' 2>/dev/null)
+OBJS  := $(patsubst %.s,$(BUILD)/%.s.o,$(ASM_S)) \
+         $(patsubst %.c,$(BUILD)/%.c.o,$(SRC_C))
 
 .PHONY: all check split clean tools
 
@@ -54,6 +70,19 @@ $(LD_SCRIPT) $(UNDEF_SYMS) $(UNDEF_FUNCS):
 $(BUILD)/%.s.o: %.s
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) -o $@ $<
+
+# --- compile C (cpp -> cc1 -> maspsx+as) ---------------------------------------
+
+# cc1 2.x segfaults on comments; always feed it preprocessed source.
+$(BUILD)/%.c.i: %.c
+	@mkdir -p $(dir $@)
+	clang -E -P -xc $(CPPFLAGS) -o $@ $<
+
+$(BUILD)/%.c.s: $(BUILD)/%.c.i
+	$(CC1) $(CC1FLAGS) -o $@ $<
+
+$(BUILD)/%.c.o: $(BUILD)/%.c.s
+	$(PYTHON) $(MASPSX) $(MASPSXFLAGS) -o $@ $<
 
 # --- link + extract ----------------------------------------------------------
 

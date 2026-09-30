@@ -28,6 +28,8 @@ options:
   generate_asm_macros_files: False
 
   section_order: [".rodata", ".text", ".data", ".sdata", ".sbss", ".bss"]
+  symbol_addrs_path:
+    - configs/USA/sym.main.txt
   undefined_funcs_auto_path: linkers/USA/undefined_funcs_auto.main.txt
   undefined_syms_auto_path: linkers/USA/undefined_syms_auto.main.txt
 
@@ -46,10 +48,38 @@ segments:
     type: code
     start: 0x800
     vram: 0x80010000
+    # Runtime zero-init region (sbss+bss) is [0x800B5B20, 0x800DD4F0): the
+    # entry code at 0x8008D620 clears exactly this range (see README). The
+    # retail image stores it as zeros inside the file (PS-X EXE t_size covers
+    # it), so nothing extends past the image -> no trailing noload bss.
+    bss_size: 0x0
     subsegments:
-      # First pass: everything as split asm. Ranges verified against the
-      # legacy bootstrap config (slus_009.02.yaml): text ends, data begins
-      # at 0x8A8F0 (VA 0x8009A0F0).
-      - [0x800, asm, 800]
+      # --- Early image: inferred TU structure ---------------------------
+      # No inter-function padding exists in the game-code area, and all
+      # .rodata is consolidated after .text in link order, so boundaries are
+      # inferred from: rodata link order vs. user-function addresses
+      # (D_8009A0F0<"0123456789ABCDEF"<"DATA.BIN" vs. their users at
+      # 0x80011748<0x80011968<0x800127B4), jump-table link order, and call
+      # locality. Boundaries below 0x4F3C are hypotheses, not proof.
+      - [0x800, asm, boot]      # func_80010000: boot/main init sequence
+      - [0xB64, asm, bootsys]   # system/task/display/text-draw init helpers
+                                # (font metric table D_8009A0F0, hex digits D_8009A1B0 users)
+      - [0x2C3C, c, arena]      # package-arena base getter + allocator + misc small helpers
+      - [0x2FB4, c, cdload]     # func_800127B4: resolve DATA/STR/XA.BIN LBAs; sector reads
+      - [0x3210, c, cdutil]     # small CD-layer helpers (func_80012A10/12A34/12AA0)
+      - [0x32EC, c, sbrle]      # SB-RLE: func_80012AEC stream driver + func_80012BB0 block decoder
+      - [0x3534, asm, pkgload]  # package/unit-pack/TIM-bundle loaders (func_80012E10 family)
+      # --- Unanalyzed game code (asm blobs, boundaries TBD) -------------
+      - [0x4F78, asm, 4F78]
+      - [0x20074, asm, 20074]
+      # From here functions are padded to 16 bytes: PsyQ SDK library TUs
+      # (libapi/libcd/libgpu/... + crt0 with the 0x8008D620 entry). Inferred.
+      - [0x6DF00, asm, psyq]
+      # --- Initialized data (.rodata + .data + .sdata), ends at vram 0x800B5B20
       - [0x8A8F0, data, 8A8F0]
+      # --- Zero image: runtime .sbss/.bss ------------------------------
+      # vram [0x800B5B20, 0x800DD800). Entry clears [.., 0x800DD4F0); the
+      # trailing 0x310 bytes are unreferenced padding overlapped by the
+      # package arena at runtime (arena base = 0x800DD4F0, D_800B5BB8).
+      - [0xA6320, bss, bss]
   - [0xCE000]
