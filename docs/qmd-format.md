@@ -59,50 +59,66 @@ against part1 TIM destination rects, e.g. GMDORA10 → TIM11 (cba 0x6017 = clut
 clut (320,320), tpage 0x001C), grpA_00 unit → cba 0x3E37 = clut (880,248),
 tpage 0x000D = image (832,0). UV order is `[uv0][uv1][uv2][cba][uv3][tpage]`
 for quads and `[uv0][uv1][cba][uv2][tpage]` for tris [VERIFIED by TIM rect
-match]. Normal indices in tails of types 8/9 point into section D [HYPOTHESIS]:
-textured blocks carry an extra per-vertex array at f3..f4 (CMFANR00: 45×4B =
-s8 nx,ny,nz + pad). Type 10/11 8B tails [UNRESOLVED] (first u16 looks like
-2×record ordinal).
+match]. The single modulation color is the `rgb+cmd` trailer word (offset 20
+in quad records 8/10, offset 16 in tri records 9/11) [VERIFIED]. Normal
+indices in the 8B tails of types 8/9 (u16 x2, per corner) are confirmed small
+and in-range; what they index in simple blocks is [UNRESOLVED] (complex blocks
+have explicit per-part normal pools, see below). Type 10/11 8B tails
+[UNRESOLVED].
 
-Quads triangulate as `(v0,v1,v2)+(v1,v2,v3)`. [VERIFIED on X1LJUT00]
+Quads triangulate as `(v0,v1,v2)+(v1,v2,v3)` — GPU packet order; the polygon
+boundary is the zigzag `v0-v1-v3-v2`. [VERIFIED: convexity + 3D<->UV
+edge-ratio consistency + closed-manifold winding on EMBTNK00]
 
 ### Complex blocks (kind_lo = N > 1 parts)
 
-Part table of N × 0x24 entries right after the kind word:
+Part table of N × 0x24 entries right after the kind word. **All offsets in an
+entry are self-relative to that entry's own address** — the absolute offset
+(from block+0x10) is `stored + 0x24 * part_index`. [VERIFIED on EMBTNK00:
+every fixed-up offset lands exactly on its section boundary]
 
 ```
-+0x00 u32 f0  prim-stream payload offset (rel. block+0x10)
-+0x04 u32 f1  slice offset → s16 (x,z) pool
-+0x08 u32 f2  slice offset → s16 y pool
-+0x0C u32 f3  slice offset → normals pool (s16, ~4096 scale)
-+0x10 u32 f4  slice offset → second ~4096-scale pool
-+0x14 u32 count
-+0x18 u32 f6
-+0x1C 4×s16  bounding sphere (cx,cy,cz,r) in part-local space
++0x00 u32 prim   per-part face-chunk stream (same chunk/record layout as
+                 simple blocks: u16 count + u16 type chunks, (0,0) terminator,
+                 4-byte aligned; consecutive streams pack back to back)
++0x04 u32 xz     -> count x (s16 x, s16 z) vertex pairs  [VERIFIED]
++0x08 u32 y      -> count x s16 vertex heights           [VERIFIED]
++0x0C u32 nrm    -> 4-byte normal slots: one per PRIM for flat types
+                    (10/11), one per VERTEX for gouraud types (8/9)
++0x10 u32 f4     -> u16 slots, same multiplicity as nrm
++0x14 u32 count  vertex count of this part
++0x18 u32 f6     offset into the prim region (runtime packet link?) [UNRESOLVED]
++0x1C 4xs16      bounding sphere (cx, cz, cy, r) — pool axis order!  [VERIFIED]
 ```
 
-The prim stream is a global contiguous sequence of `[u32 rgb+cmd][payload]`
-records, starting right after the part table and ending at the lowest f1
-target; part f0 = offset of the part's first payload (its rgb+cmd word sits
-4 bytes earlier, i.e. in the previous part's span; part0's first payload is
-cmd-less). Sections are separated by ~8B gaps. Record payloads
-[VERIFIED on EMBTNK00 / C1LJUT00 / CMHANR00]:
+Vertices are part-local: `v[j] = (xz[j].x, y[j], xz[j].z)`, and record vertex
+indices (stored ×2) are local to the part (max index = count-1 for every part
+of EMBTNK00). [VERIFIED]
 
-| cmd | GPU sense | payload |
-|---|---|---|
-| 0x3C | GT4 quad | 4×(u16 v, u16 n) + uv0,uv1,uv2,cba,uv3,tpage (12B) |
-| 0x34 | GT3 tri | 3×(u16 v, u16 n) + uv0,uv1,uv2,cba,uv3,tpage (12B) |
-| 0x2C | flat-colored N-gon | u16 v0, u16 n0, u32 color, (N-1)×(u16 v, u16 n), uvblk 12B |
-| 0x24 | flat-colored tri | u16 v0, u16 n0, u32 color, 2×(u16 v, u16 n), uvblk 10B |
+**Normals**: the full per-slot normal is a 3D unit vector in 12-bit fixed
+point (length 4096) split across the `nrm` and `f4` slots:
+`n = (nrm.s16lo, f4.s16, nrm.s16hi)` — i.e. `(nx, nz)` in the low/high halves
+of the nrm word and `ny` in f4 — in **pool axis order (x, z, y)**, matching
+the bbox field order. Verified numerically: every EMBTNK00 slot is exactly
+unit-length (|n| = 4096 +/- 1). The per-slot ordering vs. prim order and the
+8B record tails of types 10/11 (per-corner normal indices for gouraud types
+8/9 ARE in the tail as u16 x2) remain [PARTIALLY RESOLVED]; the viewer uses
+geometric normals instead.
 
-Vertex indices are raw u16 (no ×2) into **global** pools: f1 slice → s16
-(x,z)-pair pool, f2 slice → s16 y pool; vertex = (pair.x, ypool[v], pair.z).
-[VERIFIED: EMBTNK00 part3 renders as a coherent armor plate; CMHANR00 and
-EMBTNK00 render as tank hulls.] The n fields of (v,n) pairs index the f3/f4
-~4096-scale pools (normals) [HYPOTHESIS]; occasional n0 values like 0x5C15
-remain [UNRESOLVED]. Meaning of per-part `count`, `f6`, and the exact role of
-the f3/f4 pools and the file-tail blob (skeleton/joint data — contains
-X-block-like vertex values) [UNRESOLVED].
+**Quad corner order**: records store corners in GPU packet order — the GPU
+draws quads as `(v0,v1,v2)+(v1,v2,v3)`, i.e. the polygon boundary is the
+zigzag `v0-v1-v3-v2`. [VERIFIED: it is the only convex boundary on all 93
+EMBTNK00 quads, and the 3D<->UV edge-ratio variance is minimal for the
+identity mapping; winding is consistent across the whole closed mesh]
+
+**Face color**: for the textured types the single modulation color lives in
+the record's `rgb+cmd` trailer word (offset 20 for quad types 8/10, offset 16
+for tri types 9/11), usually `80 80 80` = neutral. [VERIFIED — reading it
+from the wrong offset produced purple/red-modulated renders]
+
+Complex models are multi-pose / multi-piece assemblies: parts overlap in
+model space (e.g. EMBTNK00 = hull + turret+gun + two mirrored tread rings +
+hatches). The viewer exposes a per-part selector.
 
 ## Verification renders
 
@@ -111,3 +127,9 @@ tris — coherent level geometry), `GMTANK01.png` (tank hull + barrel),
 `X1LJUT00.png/.obj` (unit), `CMFANR00.png/.obj` (textured fan blade,
 types 8/9/10), `EMBTNK00_complex.png` / `CMHANR00_complex.png` /
 `C1LJUT00_complex.png` (complex multi-part models — tank/unit hulls).
+
+Headless viewer renders (`tools/sb-viewer --render <part3> <BLOCK> out.png`,
+`SB_PART=n` selects a single part of a complex block, `SB_NOTEX=1` disables
+textures): EMBTNK00 parts render as clean closed solids — part 0 = hull,
+part 2 = turret + gun barrel, parts 4/5 = the two mirrored triangular tread
+rings, matching the in-game boss tank.

@@ -34,6 +34,7 @@ struct QmdBlock {
     uint32_t vertCount = 0;
     std::vector<QmdVertex> verts;
     std::vector<QmdFace> faces;      // triangulated on parse
+    std::vector<QmdBlock> parts;     // complex blocks: one entry per part
 };
 
 /// Walks every QMD block in a part3 buffer and parses simple blocks into

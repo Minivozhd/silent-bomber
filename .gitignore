@@ -20,3 +20,6 @@ __pycache__/
 # fingerprint trial artifacts
 decomp/tools/fingerprint/work/
 decomp/tools/fingerprint/results.txt
+
+# Generated verification renders (reproducible: research/qmd_parse.py render)
+research/render/

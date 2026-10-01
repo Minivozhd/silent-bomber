@@ -1,5 +1,6 @@
 #include "QmdModel.hpp"
 
+#include <cstdlib>
 #include <cstring>
 
 namespace sb {
@@ -37,175 +38,39 @@ static int colorOff(int type, int corner, bool& ok) {
         case 1: return 16 + 4 * corner;           // 3 colors
         case 4: return 8 + 4 * corner;            // 4 colors, no normals
         case 5: return 6 + 4 * corner;            // 3 colors, no normals
-        case 2: case 10: case 11: return 20;      // 1 color
-        case 3: return 16;                        // 1 color
+        case 2: case 10: return 20;               // 1 color (trailer rgb+cmd)
+        case 3: case 9: case 11: return 16;       // 1 color (trailer rgb+cmd)
         case 6: return 24;                        // 1 color
-        case 8: case 9: return 0;                 // textured: rgb+cmd word at 0
+        case 8: return 20;                        // 1 color (trailer rgb+cmd)
         default: ok = false; return 0;
     }
 }
 
 static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdBlock& out);
 
-// Complex block: N parts (0x24 entries) + a global GPU-like prim stream.
-// cmd 0x3C = quad (4 (v,n) u16 pairs + 12B uvblk); 0x34 = tri (3 pairs + 12B);
-// cmd 0x2C = flat-colored N-gon ([v0][n0][u32 color][pairs][uvblk 12B]);
-// cmd 0x24 = flat-colored tri ([v0][n0][u32 color][2 pairs][uvblk 10B]).
-// Vertices live in global pools f1 (s16 x,z pairs) + f2 (s16 y), raw u16 idx.
-static bool cbaOk(uint16_t c) { return (c >> 6) < 512; }
-static bool tpageOk(uint16_t t) { return (t & 0xF) < 16 && t < 0x200; }
-
-static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
-                              uint32_t parts, QmdBlock& out) {
-    const uint8_t* base = data + boff + 0x10;
-    size_t baseOff = boff + 0x10;
-    struct Part { uint32_t prim, xz, y, nrm, f4, count, f6; };
-    std::vector<Part> ps(parts);
-    size_t xzMin = SIZE_MAX, yMin = SIZE_MAX, nrmMin = SIZE_MAX, streamStart = 0;
-    for (uint32_t i = 0; i < parts; ++i) {
-        const uint8_t* e = base + 0x24 * i;
-        ps[i] = {rd32(e), rd32(e + 4), rd32(e + 8), rd32(e + 12), rd32(e + 16),
-                 rd32(e + 20), rd32(e + 24)};
-        xzMin = std::min(xzMin, (size_t)ps[i].xz);
-        yMin = std::min(yMin, (size_t)ps[i].y);
-        nrmMin = std::min(nrmMin, (size_t)ps[i].nrm);
-    }
-    if (xzMin == SIZE_MAX || nrmMin == SIZE_MAX || nrmMin <= xzMin) return;
-    streamStart = baseOff + 0x24 * parts;
-    size_t xz0 = baseOff + xzMin, y0 = baseOff + yMin;
-    size_t xzN = (nrmMin - xzMin) / 4, yN = (nrmMin - yMin) / 2;
-    if (xz0 + xzN * 4 > size || y0 + yN * 2 > size) return;
-
-    out.verts.reserve(xzN);
-    for (size_t i = 0; i < xzN; ++i) {
-        QmdVertex v;
-        v.x = rds16(data + xz0 + 4 * i);
-        v.y = (i < yN) ? rds16(data + y0 + 2 * i) : 0;
-        v.z = rds16(data + xz0 + 4 * i + 2);
-        out.verts.push_back(v);
-    }
-
-    size_t streamEnd = xz0, p = streamStart;
-    while (p + 12 < streamEnd) {
-        // find payload length by locating the uvblock signature
-        int plen = -1;
-        for (int pl = 12; pl <= 64; pl += 2) {
-            size_t uvo = p + pl - 12;
-            if (uvo + 12 > streamEnd) break;
-            if (cbaOk(rd16(data + uvo + 6)) && tpageOk(rd16(data + uvo + 10))) {
-                size_t nxt = uvo + 12;
-                if (nxt + 4 >= streamEnd || std::memcmp(data + nxt, "\x80\x80\x80", 3) == 0) {
-                    plen = pl;
-                    break;
-                }
-            }
-        }
-        if (plen < 0) break;
-        uint8_t cmd = (p + plen + 4 <= streamEnd) ? data[p + plen + 3] : 0;
-        if (cmd != 0x3C && cmd != 0x34 && cmd != 0x2C && cmd != 0x24) {
-            p += plen + 4;  // keep scanning rather than producing garbage faces
-            continue;
-        }
-        std::vector<uint32_t> vs;
-        size_t uvOff = 0;
-        if (cmd == 0x2C || cmd == 0x24) {
-            int npair = (plen - 8 - 12) / 4;
-            vs.push_back(rd16(data + p));
-            for (int j = 0; j < npair; ++j) vs.push_back(rd16(data + p + 8 + 4 * j));
-            uvOff = p + 8 + 4 * npair;
-        } else {  // 0x3C / 0x34
-            int npair = (plen - 12) / 4;
-            for (int j = 0; j < npair; ++j) vs.push_back(rd16(data + p + 4 * j));
-            uvOff = p + 4 * npair;
-        }
-        // skip records with out-of-range indices (clamping to 0 draws spikes)
-        bool bad = false;
-        for (const auto& v : vs) if (v >= out.verts.size()) { bad = true; break; }
-        if (bad || vs.size() < 3) {
-            p += plen + 4;
-            continue;
-        }
-        QmdFace face;
-        face.textured = (cmd != 0);
-        if (face.textured && uvOff + 10 <= streamEnd) {
-            if (cmd == 0x24) {  // 10B uvblk: uv0,uv1,cba,uv2,tpage
-                face.uv[0][0] = data[uvOff]; face.uv[0][1] = data[uvOff + 1];
-                face.uv[1][0] = data[uvOff + 2]; face.uv[1][1] = data[uvOff + 3];
-                face.clut = rd16(data + uvOff + 4);
-                face.uv[2][0] = data[uvOff + 6]; face.uv[2][1] = data[uvOff + 7];
-                face.tpage = rd16(data + uvOff + 8);
-            } else {            // 12B uvblk: uv0,uv1,uv2,cba,uv3,tpage
-                for (int j = 0; j < 3; ++j) {
-                    face.uv[j][0] = data[uvOff + 2 * j];
-                    face.uv[j][1] = data[uvOff + 2 * j + 1];
-                }
-                face.clut = rd16(data + uvOff + 6);
-                face.uv[3][0] = data[uvOff + 8]; face.uv[3][1] = data[uvOff + 9];
-                face.tpage = rd16(data + uvOff + 10);
-            }
-            // neutral gouraud unless 0x2C/0x24 (flat with literal color)
-            if (cmd == 0x2C || cmd == 0x24) {
-                face.r = data[p + 4];
-                face.g = data[p + 5];
-                face.b = data[p + 6];
-            } else {
-                // trailer rgb+cmd word at p+plen
-                face.r = data[p + plen];
-                face.g = data[p + plen + 1];
-                face.b = data[p + plen + 2];
-            }
-        }
-        auto emit = [&](std::vector<uint32_t> idx) {
-            if (idx.size() == 3) { face.verts = idx; out.faces.push_back(face); }
-        };
-        if (cmd == 0x3C || cmd == 0x2C) {
-            if (vs.size() >= 4) {
-                face.verts = {vs[0], vs[1], vs[2]};
-                out.faces.push_back(face);
-                face.verts = {vs[1], vs[2], vs[3]};
-                out.faces.push_back(face);
-                for (size_t j = 4; j < vs.size(); ++j) {
-                    face.verts = {vs[0], vs[j - 1], vs[j]};
-                    out.faces.push_back(face);
-                }
-            } else {
-                emit(vs);
-            }
-        } else if (vs.size() == 3) {
-            emit(vs);
-        } else if (vs.size() > 3) {
-            for (size_t j = 1; j + 1 < vs.size(); ++j) {
-                face.verts = {vs[0], vs[j], vs[j + 1]};
-                out.faces.push_back(face);
-            }
-        }
-        p += plen + 4;
-    }
+// Shared face-chunk stream parser (same record layout in simple and complex
+// blocks): u16 count + u16 type chunks until a (0,0) terminator.
+// Vertex indices are stored x2 and are local to the given vertex window
+// [vbase, vbase + vcount) in out.verts.
+// Quad records store corners in GPU order: the GPU draws (v0,v1,v2)+(v1,v2,v3),
+// i.e. the polygon boundary is the zigzag v0-v1-v3-v2 (verified: this is the
+// only convex boundary, and the 3D<->UV edge-ratio variance is minimal for the
+// identity mapping). SB_QPERM allows A/B testing of alternate interpretations.
+static const int kQuadPerms[][4] = {
+    {0, 1, 2, 3}, {3, 2, 0, 1}, {2, 0, 1, 3}, {3, 1, 0, 2}, {2, 3, 1, 0}, {1, 3, 2, 0},
+};
+static const int* quadPerm() {
+    static int p = [] {
+        const char* s = getenv("SB_QPERM");
+        int v = s ? atoi(s) : 0;
+        return (v >= 0 && v < 6) ? v : 0;
+    }();
+    return kQuadPerms[p];
 }
 
-static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdBlock& out) {
-    const uint8_t* base = data + boff + 0x10;
-    size_t baseOff = boff + 0x10;
-    uint32_t f0 = rd32(base + 0x00);  // section A (face chunks)
-    uint32_t f1 = rd32(base + 0x04);  // section B (x,z pairs)
-    uint32_t f2 = rd32(base + 0x08);  // section C (y)
-    out.vertCount = rd32(base + 0x14);
-
-    // vertices: B = n x (s16 x, s16 z), C = n x s16 y
-    size_t vb = baseOff + f1, vc = baseOff + f2;
-    if (vb + out.vertCount * 4 > size || vc + out.vertCount * 2 > size) return;
-    out.verts.reserve(out.vertCount);
-    for (uint32_t i = 0; i < out.vertCount; ++i) {
-        QmdVertex v;
-        v.x = rds16(data + vb + 4 * i);
-        v.y = rds16(data + vc + 2 * i);
-        v.z = rds16(data + vb + 4 * i + 2);
-        out.verts.push_back(v);
-    }
-
-    // face chunks
-    size_t p = baseOff + f0, end = baseOff + f1;
-    while (p + 4 <= end && p + 4 <= size) {
+static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
+                             uint32_t vbase, uint32_t vcount, QmdBlock& out) {
+    while (p + 4 <= size) {
         uint16_t count = rd16(data + p), type = rd16(data + p + 2);
         if (count == 0 && type == 0) break;
         int rs = recSize(type);
@@ -214,19 +79,24 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
         for (uint16_t i = 0; i < count; ++i) {
             const uint8_t* r = data + p + (size_t)rs * i;
             QmdFace face;
-            int n = (type == 1 || type == 3 || type == 5) ? 3 : 4;
+            int n = (type == 1 || type == 3 || type == 5 || type == 9 || type == 11) ? 3 : 4;
+            uint32_t rawIdx[4];
+            for (int j = 0; j < n; ++j) rawIdx[j] = vidx(r, j);
+            const int* pm = quadPerm();
             for (int j = 0; j < n; ++j) {
-                uint32_t vi = vidx(r, j);
-                if (vi >= out.vertCount) { face.verts.clear(); break; }
-                face.verts.push_back(vi);
+                uint32_t vi = rawIdx[n == 4 ? pm[j] : j];
+                if (vi >= vcount) { face.verts.clear(); break; }
+                face.verts.push_back(vbase + vi);
             }
             if (face.verts.empty()) continue;
             face.textured = (type >= 8);
+            bool isQuad = (n == 4);
             // stored per-corner normals for the untextured types (s8 x3, normalized)
             if (type == 0 || type == 2) {          // [8B idx][12B: 4x3 normals][...]
                 face.hasNormals = true;
                 for (int j = 0; j < 4; ++j) {
-                    int8_t nx = (int8_t)r[8 + 3 * j], ny = (int8_t)r[8 + 3 * j + 1], nz = (int8_t)r[8 + 3 * j + 2];
+                    int tj = isQuad ? pm[j] : j;
+                    int8_t nx = (int8_t)r[8 + 3 * tj], ny = (int8_t)r[8 + 3 * tj + 1], nz = (int8_t)r[8 + 3 * tj + 2];
                     float l = std::sqrt((float)(nx * nx + ny * ny + nz * nz));
                     if (l > 1e-6f) { face.n[j][0] = nx / l; face.n[j][1] = ny / l; face.n[j][2] = nz / l; }
                 }
@@ -240,13 +110,18 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
             }
             // UV block for textured types (uv = u8 pairs, cba/tpage = u16)
             if (type == 8 || type == 10) {       // quad: [8B idx][12B uvblk][4B rgb+cmd][8B nidx]
+                uint8_t rawUv[4][2];
                 for (int j = 0; j < 3; ++j) {
-                    face.uv[j][0] = r[8 + 2 * j];
-                    face.uv[j][1] = r[8 + 2 * j + 1];
+                    rawUv[j][0] = r[8 + 2 * j];
+                    rawUv[j][1] = r[8 + 2 * j + 1];
                 }
                 face.clut = rd16(r + 14);
-                face.uv[3][0] = r[16]; face.uv[3][1] = r[17];
+                rawUv[3][0] = r[16]; rawUv[3][1] = r[17];
                 face.tpage = rd16(r + 18);
+                for (int j = 0; j < 4; ++j) {
+                    face.uv[j][0] = rawUv[pm[j]][0];
+                    face.uv[j][1] = rawUv[pm[j]][1];
+                }
             } else if (type == 9 || type == 11) { // tri: [6B idx][10B uvblk][4B rgb+cmd][8B]
                 face.uv[0][0] = r[6]; face.uv[0][1] = r[7];
                 face.uv[1][0] = r[8]; face.uv[1][1] = r[9];
@@ -273,6 +148,83 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
         }
         p += (size_t)rs * count;
     }
+}
+
+// Complex block: N parts, each a 0x24 table entry whose offsets are
+// SELF-RELATIVE to the entry's own address (stored + 0x24 * part_index):
+//   +0x00 prim  -> per-part face-chunk stream (same layout as simple blocks)
+//   +0x04 xz    -> count x (s16 x, s16 z) vertex pairs
+//   +0x08 y     -> count x s16 vertex heights
+//   +0x0C nrm   -> 4-byte normals: one per PRIM for flat types (10/11),
+//                  one per VERTEX for gouraud types (8/9, indexed x2 from
+//                  the 8-byte record tail)
+//   +0x10 f4    -> u16 array, same per-prim/per-vertex multiplicity as nrm
+//   +0x14 count -> vertex count of this part
+//   +0x18 f6    -> offset into the prim region (runtime use)
+//   +0x1C bbox  -> 4 x s16 bounding sphere (cx, cz, cy, r) in pool order
+static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
+                              uint32_t parts, QmdBlock& out) {
+    size_t baseOff = boff + 0x10;
+    int onlyPart = [] { const char* s = getenv("SB_PART"); return s ? atoi(s) : -1; }();
+    for (uint32_t k = 0; k < parts; ++k) {
+        size_t eoff = baseOff + 0x24 * k;
+        if (eoff + 0x24 > size) return;
+        const uint8_t* e = data + eoff;
+        uint32_t fix = 0x24 * k;  // self-relative offset fixup
+        uint32_t prim = rd32(e) + fix;
+        uint32_t xz = rd32(e + 4) + fix;
+        uint32_t y = rd32(e + 8) + fix;
+        uint32_t count = rd32(e + 20);
+        size_t vb = baseOff + xz, vc = baseOff + y;
+        if (vb + count * 4 > size || vc + count * 2 > size) return;
+
+        QmdBlock sub;
+        sub.name = out.name + " part " + std::to_string(k);
+        sub.offset = boff + eoff - baseOff;
+        sub.simple = false;
+        sub.vertCount = count;
+        for (uint32_t j = 0; j < count; ++j) {
+            QmdVertex v;
+            v.x = rds16(data + vb + 4 * j);
+            v.y = rds16(data + vc + 2 * j);
+            v.z = rds16(data + vb + 4 * j + 2);
+            sub.verts.push_back(v);
+        }
+        parseChunkStream(data, size, baseOff + prim, 0, count, sub);
+        if (onlyPart < 0 || (int)k == onlyPart) {
+            // merge into the assembled view
+            uint32_t vbase = (uint32_t)out.verts.size();
+            out.verts.insert(out.verts.end(), sub.verts.begin(), sub.verts.end());
+            for (auto f : sub.faces) {
+                for (auto& vi : f.verts) vi += vbase;
+                out.faces.push_back(std::move(f));
+            }
+        }
+        out.parts.push_back(std::move(sub));
+    }
+}
+
+static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdBlock& out) {
+    const uint8_t* base = data + boff + 0x10;
+    size_t baseOff = boff + 0x10;
+    uint32_t f0 = rd32(base + 0x00);  // section A (face chunks)
+    uint32_t f1 = rd32(base + 0x04);  // section B (x,z pairs)
+    uint32_t f2 = rd32(base + 0x08);  // section C (y)
+    out.vertCount = rd32(base + 0x14);
+
+    // vertices: B = n x (s16 x, s16 z), C = n x s16 y
+    size_t vb = baseOff + f1, vc = baseOff + f2;
+    if (vb + out.vertCount * 4 > size || vc + out.vertCount * 2 > size) return;
+    out.verts.reserve(out.vertCount);
+    for (uint32_t i = 0; i < out.vertCount; ++i) {
+        QmdVertex v;
+        v.x = rds16(data + vb + 4 * i);
+        v.y = rds16(data + vc + 2 * i);
+        v.z = rds16(data + vb + 4 * i + 2);
+        out.verts.push_back(v);
+    }
+
+    parseChunkStream(data, size, baseOff + f0, 0, out.vertCount, out);
 }
 
 std::vector<QmdBlock> parseQmdContainer(const uint8_t* data, size_t size) {

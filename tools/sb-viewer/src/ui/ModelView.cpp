@@ -134,7 +134,7 @@ void ModelView::render() {
         int pxPerWord = bppMode == 0 ? 4 : bppMode == 1 ? 2 : 1;
         int pageX = (f.tpage & 0xF) * 64 * pxPerWord;
         int pageY = ((f.tpage >> 4) & 1) * 256;
-        bool tex = f.textured && m_tex && f.tpage != 0;
+        bool tex = f.textured && m_tex && f.tpage != 0 && !getenv("SB_NOTEX");
 
         // scanline fill with barycentric UV + intensity interpolation
         float ymin = std::min({pts[0][1], pts[1][1], pts[2][1]});

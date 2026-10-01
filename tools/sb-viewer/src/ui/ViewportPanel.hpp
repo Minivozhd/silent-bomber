@@ -12,6 +12,7 @@
 
 class ImageView;
 class ModelView;
+class QComboBox;
 
 /// Viewport: shows a package part file. part1 bundles -> TIM gallery;
 /// other parts -> hex/info stub (model/level viewers land here later).
@@ -27,6 +28,8 @@ private:
     void showQmdContainer(const QString& path);
 
     QListWidget* m_list = nullptr;
+    QComboBox* m_partCombo = nullptr;
+    QWidget* m_modelBox = nullptr;
     ImageView* m_image = nullptr;
     ModelView* m_model = nullptr;
     QLabel* m_info = nullptr;

@@ -23,19 +23,26 @@ QMD block:
              type 1 = tris gouraud (28B), type 3 = tris flat (20B); u32 0 = end.
              vertex indices are stored x2 (u16 >> 1).
   --- complex block (w0c.lo = N parts) ---
-  +0x10  N x 0x24-byte part entries:
-         +0x00 u32 f0: prim-stream payload offset (rel. block+0x10)
-         +0x04 u32 f1: slice offset -> s16 pairs pool  (x,z?)
-         +0x08 u32 f2: slice offset -> s16 pool (y?)
-         +0x0C u32 f3: slice offset -> normals pool (s16, ~4096 scale)
-         +0x10 u32 f4: slice offset -> second ~4096-scale pool
-         +0x14 u32 count
-         +0x18 u32 f6
-         +0x1C 4 x s16: bounding sphere (cx,cy,cz,r) [part local space]
-  prim stream (global, contiguous [u32 rgb+cmd][payload]):
-     cmd 0x3c -> 4 (v,n) u16 pairs  + uv0,uv1,uv2,cba,uv3,tpage  (32B total)
-     cmd 0x34 -> 3 or 6 (v,n) pairs + uv0,uv1,uv2,cba,pad,tpage  (28B/40B)
-     cba/tpage are literal PS1 GPU words (VERIFIED against part1 TIM rects).
+  +0x10  N x 0x24-byte part entries; ALL offsets are SELF-RELATIVE to the
+         entry's own address: absolute offset (rel. block+0x10) =
+         stored + 0x24 * part_index. [VERIFIED 2026-10-01 on EMBTNK00]
+         +0x00 u32 prim:  per-part face-chunk stream (same layout as simple
+                          section A: u16 count + u16 type chunks, (0,0) end)
+         +0x04 u32 xz:    -> count x (s16 x, s16 z) vertex pairs
+         +0x08 u32 y:     -> count x s16 vertex heights
+         +0x0C u32 nrm:   -> 4B normal slots (per prim for flat types 10/11,
+                          per vertex for gouraud types 8/9)
+         +0x10 u32 f4:    -> u16 slots, same multiplicity as nrm
+         +0x14 u32 count: vertex count of this part
+         +0x18 u32 f6:    offset into the prim region (runtime?) [UNRESOLVED]
+         +0x1C 4 x s16: bounding sphere (cx, cz, cy, r) — pool axis order
+  Normals: full normal = (nrm.s16lo, f4.s16, nrm.s16hi) = (nx, nz, ny) in
+  pool axis order (x, z, y), unit length 4096 (12-bit fixed). [VERIFIED:
+  every EMBTNK00 slot is unit-length]
+  Vertex indices in records are x2 and PART-LOCAL (max = count-1).
+  Quad records store corners in GPU packet order: tris (v0,v1,v2)+(v1,v2,v3),
+  polygon boundary is the zigzag v0-v1-v3-v2. [VERIFIED: convexity + UV/3D
+  edge-ratio + closed-manifold winding]
 
 Usage:
   qmd_parse.py <file>                 -> block inventory + per-block stats
@@ -177,12 +184,17 @@ class Block:
 
     # ---- complex block ----
     def parts(self):
-        """complex block -> list of part entries."""
+        """complex block -> list of part entries. Offsets in an entry are
+        self-relative to the entry's own address (stored + 0x24*i)."""
         n = self.kind_lo
         out = []
         for i in range(n):
             e = self.base + 0x24*i
             f = [u32(self.buf, e+4*j) for j in range(7)]
+            # f0..f4 and f6 are offsets self-relative to the entry address;
+            # f5 (count) is a plain value
+            for j in (0, 1, 2, 3, 4, 6):
+                f[j] += 0x24*i
             bbox = [s16(self.buf, e+0x1C+2*j) for j in range(4)]
             out.append({'prim': self.base + f[0], 'xz': self.base + f[1],
                         'y': self.base + f[2], 'nrm': self.base + f[3],
@@ -190,49 +202,57 @@ class Block:
                         'bbox': bbox})
         return out
 
-    def prim_records(self):
-        """complex block: global prim stream of GPU-like records.
-        Starts right after the part table; ends at the min f1 target.
-        Returns list of dicts with v/n index pairs, uvs, cba, tpage."""
-        parts = self.parts()
-        start = self.base + 0x24*len(parts)
-        stop = min(p['xz'] for p in parts)
+    def part_vertices(self, part):
+        """complex block part -> [(x, y, z)] (part-local space)."""
+        n = part['count']
+        return [(s16(self.buf, part['xz']+4*i), s16(self.buf, part['y']+2*i),
+                 s16(self.buf, part['xz']+4*i+2)) for i in range(n)]
+
+    def part_normals(self, part, nslots):
+        """complex block part -> [(nx, ny, nz)] float; normal slots are split:
+        (nx, nz) = s16 pair in the nrm word, ny = s16 in the f4 slot
+        (pool axis order x, z, y), unit length 4096."""
         out = []
-        p = start
-        first = True
-        while p + 4 <= stop - 0:  # stream ends with a 16B cmd+3-pair trailer
-            if first:
-                # first record has no rgb+cmd word
-                npairs, psz = 3, 24
-                rgb, cmd = (0x80, 0x80, 0x80), 0x34
-                hdr_len = 0
-                first = False
-            else:
-                rgb = tuple(self.buf[p:p+3]); cmd = self.buf[p+3]
-                hdr_len = 4
-                if cmd == 0x3c:
-                    cba_at = 26
-                    npairs = 4
-                elif cmd == 0x34:
-                    cba_at = 22
-                    npairs = 3
+        for i in range(nslots):
+            nx = s16(self.buf, part['nrm']+4*i)
+            nz = s16(self.buf, part['nrm']+4*i+2)
+            ny = s16(self.buf, part['f4']+2*i)
+            l = math.sqrt(nx*nx + ny*ny + nz*nz) or 1
+            out.append((nx/l, ny/l, nz/l))
+        return out
+
+    def part_faces(self, part):
+        """complex block part -> polys, same shape as faces(); part-local
+        vertex indices (stored x2)."""
+        out = []
+        p = part['prim']
+        while True:
+            count, typ = u16(self.buf, p), u16(self.buf, p+2)
+            if count == 0 and typ == 0:
+                break
+            p += 4
+            sz = self.REC_SIZE[typ]
+            for i in range(count):
+                r = p + sz*i
+                nvtx = 3 if typ in (1, 3, 5, 9, 11) else 4
+                idx = [u16(self.buf, r+2*j) >> 1 for j in range(nvtx)]
+                # modulation color lives in the rgb+cmd trailer word
+                col = [tuple(self.buf[r+(20 if nvtx == 4 else 16):][:3])]
+                if typ in (8, 10):
+                    uvs = [tuple(self.buf[r+8+2*j:r+10+2*j]) for j in range(3)]
+                    cba = u16(self.buf, r+14)
+                    uvs.append(tuple(self.buf[r+16:r+18]))
+                    tpage = u16(self.buf, r+18)
+                    out.append((idx, 'p4-t', [(cba, tpage)] + col, r))
+                elif typ in (9, 11):
+                    uvs = [tuple(self.buf[r+6+2*j:r+8+2*j]) for j in range(2)]
+                    cba = u16(self.buf, r+10)
+                    uvs.append(tuple(self.buf[r+12:r+14]))
+                    tpage = u16(self.buf, r+14)
+                    out.append((idx, 'tri-t', [(cba, tpage)] + col, r))
                 else:
-                    break
-                if u16(self.buf, p+hdr_len+cba_at-4) != 0x3E37 and \
-                   u16(self.buf, p+hdr_len+cba_at+6) == 0x3E37:
-                    npairs, cba_at = 6, 34  # 6-pair variant
-                if cmd not in (0x34, 0x3c):
-                    break
-            q = p + hdr_len
-            pairs = [(u16(self.buf, q+4*j), u16(self.buf, q+4*j+2)) for j in range(npairs)]
-            uv_off = q + 4*npairs
-            uvs = [tuple(self.buf[uv_off+2*j:uv_off+2*j+2]) for j in range(3)]
-            cba = u16(self.buf, uv_off+6)
-            uv3 = tuple(self.buf[uv_off+8:uv_off+10])
-            tpage = u16(self.buf, uv_off+10)
-            out.append({'off': p, 'cmd': cmd, 'rgb': rgb, 'pairs': pairs,
-                        'uvs': uvs, 'cba': cba, 'uv3': uv3, 'tpage': tpage})
-            p = uv_off + 12
+                    out.append((idx, 'p%d' % nvtx, col, r))
+            p += sz*count
         return out
 
 def iter_blocks(buf):
@@ -325,75 +345,23 @@ def export_obj(path, verts, tris, note=''):
             f.write('f ' + ' '.join(str(i+1) for i in t) + '\n')
 
 # ----------------------------------------------------------------- complex blocks
-def _cba_ok(c): return (c >> 6) < 512
-def _tp_ok(t): return (t & 0xF) < 16 and t < 0x200
-
-def complex_records(buf, base, stream_start, stream_end):
-    """Final model (2026-10-01): continuous stream of [u32 rgb+cmd][payload] records.
-    Payloads:
-      cmd 0x3C: [4 x (u16 v, u16 n)][uvblk 12B]            -> quad
-      cmd 0x34: [3 x (u16 v, u16 n)][uvblk 12B]            -> tri
-      cmd 0x2C: [u16 v0][u16 n0][u32 color][(v,n)...][uvblk 12B] -> flat-colored N-gon
-      cmd 0x24: [u16 v0][u16 n0][u32 color][2 (v,n)][uvblk 10B]  -> flat-colored tri
-    uvblk (12B) = [uv0][uv1][uv2][cba][uv3][tpage]; (10B) = [uv0][uv1][cba][uv2][tpage].
-    Payload length is detected by scanning for the uvblock signature
-    (valid cba word at +6, valid tpage at +10) followed by next cmd / stream end."""
-    recs = []
-    p = stream_start
-    while p < stream_end:
-        found = None
-        for plen in range(12, 64, 2):
-            uvo = p + plen - 12
-            if uvo + 12 > stream_end:
-                break
-            if _cba_ok(u16(buf, uvo+6)) and _tp_ok(u16(buf, uvo+10)):
-                nxt = uvo + 12
-                if nxt >= stream_end - 4 or buf[nxt:nxt+3] == b'\x80\x80\x80':
-                    found = plen
-                    break
-        if found is None:
-            break
-        cmd = buf[p+found+3] if p+found+4 <= stream_end else None
-        recs.append({'off': p, 'plen': found, 'cmd': cmd})
-        p += found + 4
-    return recs
-
-def complex_render(block, path):
-    """Final model: verts = global pool f1 (s16 pairs) + f2 (s16 y), raw u16 index.
-    Parts share one global vertex space (part3 of EMBTNK00 renders as a coherent plate)."""
-    buf = block.buf
+def complex_render(block, path, only_part=None):
+    """Verified model (2026-10-01): per-part chunk streams + part-local vertex
+    pools; parts merged into one assembled mesh (they overlap: models are
+    multi-pose/multi-piece assemblies — use only_part for a clean view)."""
     parts = block.parts()
-    xz0 = min(p['xz'] for p in parts)
-    y0 = min(p['y'] for p in parts)
-    nrm0 = min(p['nrm'] for p in parts)
-    xz_n = (nrm0 - xz0) // 4
-    y_n = (nrm0 - y0) // 2
-    xz = [(s16(buf, xz0+4*i), s16(buf, xz0+4*i+2)) for i in range(xz_n)]
-    yy = [s16(buf, y0+2*i) for i in range(y_n)]
-    verts = [(xz[i][0], yy[i] if i < len(yy) else 0, xz[i][1]) for i in range(xz_n)]
-    stream_start = block.base + 0x24*len(parts)
-    recs = complex_records(buf, block.base, stream_start, xz0)
-    tris = []
-    for r in recs:
-        p, cmd = r['off'], r['cmd']
-        if cmd in (0x2c, 0x24):
-            npair = (r['plen'] - 8 - 12) // 4
-            vs = [u16(buf, p)] + [u16(buf, p+8+4*j) for j in range(npair)]
-        elif cmd in (0x3c, 0x34):
-            npair = (r['plen'] - 12) // 4
-            vs = [u16(buf, p+4*j) for j in range(npair)]
-        else:  # first cmd-less payload: 3-pair plain tri
-            vs = [u16(buf, p+4*j) for j in range(3)]
-        vs = [v if v < xz_n else 0 for v in vs]
-        if cmd in (0x3c, 0x2c) and len(vs) >= 4:
-            tris += [[vs[0], vs[1], vs[2]], [vs[1], vs[2], vs[3]]]
-            for j in range(4, len(vs)):
-                tris.append([vs[0], vs[j-1], vs[j]])
-        elif len(vs) == 3:
-            tris.append(vs)
-        elif len(vs) > 3:
-            for j in range(1, len(vs)-1):
-                tris.append([vs[0], vs[j], vs[j+1]])
+    verts, tris = [], []
+    for i, p in enumerate(parts):
+        if only_part is not None and i != only_part:
+            continue
+        base_v = len(verts)
+        verts += block.part_vertices(p)
+        for idx, kind, col, off in block.part_faces(p):
+            if len(idx) == 4:
+                tris.append([idx[0]+base_v, idx[1]+base_v, idx[2]+base_v])
+                tris.append([idx[1]+base_v, idx[2]+base_v, idx[3]+base_v])
+            else:
+                tris.append([v+base_v for v in idx])
     render(verts, tris, path)
     return len(verts), len(tris)
 
@@ -414,14 +382,12 @@ def inventory(path):
                   f'polys={len(fa)} {kinds} end={b.end():#x}')
         else:
             parts = b.parts()
-            recs = b.prim_records()
-            from collections import Counter
-            cc = Counter((r['cmd'], len(r['pairs'])) for r in recs)
-            print(f'  @{b.off:#07x} {b.name} COMPLEX parts={len(parts)} primrecs={len(recs)} {dict(cc)}')
+            print(f'  @{b.off:#07x} {b.name} COMPLEX parts={len(parts)}')
             for i, p in enumerate(parts):
+                fa = b.part_faces(p)
                 print(f'      part{i}: prim+{p["prim"]-b.base:#06x} xz+{p["xz"]-b.base:#06x} '
                       f'y+{p["y"]-b.base:#06x} nrm+{p["nrm"]-b.base:#06x} f4+{p["f4"]-b.base:#06x} '
-                      f'cnt={p["count"]} f6={p["f6"]:#x} bbox={p["bbox"]}')
+                      f'cnt={p["count"]} f6={p["f6"]:#x} bbox={p["bbox"]} polys={len(fa)}')
 
 def render_demo(here):
     out = os.path.join(here, 'out')
