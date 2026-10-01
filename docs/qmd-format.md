@@ -43,9 +43,9 @@ Vertex indices are stored ×2 (read `u16 >> 1`). Record layouts:
 | 1 | tri, gouraud | 28B | 3×u16 idx, 3×3B normals(+pad), 3×4B colors |
 | 2 | quad, flat | 24B | 4×u16 idx, 4×3B normals, 1×4B color |
 | 3 | tri, flat | 20B | 3×u16 idx, 3×3B normals(+pad), 1×4B color |
-| 4 | quad, gouraud, no normals | 24B | 4×u16 idx, 4×4B colors |
-| 5 | tri, gouraud, no normals | 24B | 3×u16 idx, 3×4B colors |
-| 6 | two-quad strip | 28B | 2×(4×u16 idx), 1×4B color |
+| 4 | quad, gouraud, no normals | 24B | 4×u16 idx, 4×4B colors (color layout approximate) |
+| 5 | tri, gouraud, no normals | 24B | 3×u16 idx, 3×4B colors (approximate) |
+| 6 | two-quad strip | 28B | 2×(4×u16 idx), 1×4B color (approximate) |
 | 8 | quad, textured gouraud (GT4, cmd 0x3C) | 32B | 4×u16 idx, uv0,uv1,uv2,cba,uv3,tpage (12B), rgb+cmd, 4×u16 nidx×2 |
 | 9 | tri, textured gouraud (GT3, cmd 0x34) | 28B | 3×u16 idx, uv0,uv1,cba,uv2,tpage (10B), rgb+cmd, 3×u16 nidx×2 + pad |
 | 10 | quad, textured flat (FT4, cmd 0x2C) | 32B | 4×u16 idx, uv0,uv1,uv2,cba,uv3,tpage (12B), rgb+cmd, 8B tail |
@@ -127,6 +127,9 @@ tris — coherent level geometry), `GMTANK01.png` (tank hull + barrel),
 `X1LJUT00.png/.obj` (unit), `CMFANR00.png/.obj` (textured fan blade,
 types 8/9/10), `EMBTNK00_complex.png` / `CMHANR00_complex.png` /
 `C1LJUT00_complex.png` (complex multi-part models — tank/unit hulls).
+Types 4/5/6 render as coherent geometry (GM4TNK01 walker, SMP02B01 level,
+GMGARE40 rock dome) — record sizes verified; exact color sub-layouts remain
+approximate (flat-shaded approximation in the viewer).
 
 Headless viewer renders (`tools/sb-viewer --render <part3> <BLOCK> out.png`,
 `SB_PART=n` selects a single part of a complex block, `SB_NOTEX=1` disables
