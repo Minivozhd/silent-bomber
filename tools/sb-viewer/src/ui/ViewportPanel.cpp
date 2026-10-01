@@ -48,6 +48,7 @@ ViewportPanel::ViewportPanel(QWidget* parent) : QWidget(parent) {
     m_list = new QListWidget(m_split);
     m_list->setMaximumWidth(260);
     auto* scroll = new QScrollArea(m_split);
+    m_scroll = scroll;
     auto* view = new ImageView(scroll);
     scroll->setWidget(view);
     scroll->setWidgetResizable(false);
@@ -67,6 +68,7 @@ ViewportPanel::ViewportPanel(QWidget* parent) : QWidget(parent) {
     m_split->addWidget(scroll);
     m_split->addWidget(modelBox);
     m_split->setStretchFactor(1, 1);
+    m_split->setStretchFactor(2, 1);
 
     connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
         if (row < 0) return;
@@ -81,7 +83,7 @@ ViewportPanel::ViewportPanel(QWidget* parent) : QWidget(parent) {
                 m_partCombo->clear();
                 m_partCombo->addItem(QString("all %1 parts (assembled)").arg(b.parts.size()));
                 for (size_t i = 0; i < b.parts.size(); ++i)
-                    m_partCombo->addItem(QString("part %1 — %2 verts, %3 tris")
+                    m_partCombo->addItem(QString("part %1 — %2 verts, %3 faces")
                                              .arg(i).arg(b.parts[i].verts.size()).arg(b.parts[i].faces.size()));
                 m_partCombo->setCurrentIndex(0);
                 m_partCombo->blockSignals(false);
@@ -124,7 +126,8 @@ void ViewportPanel::showFile(const QString& path) {
         m_tims.clear();
         m_blocks.clear();
         m_modelBox->setVisible(false);
-    m_partCombo->setVisible(false);
+        m_partCombo->setVisible(false);
+        m_scroll->setVisible(true);
         m_info->setText(QFileInfo(path).fileName() +
                         QString(" — %1 bytes (mission-data viewer pending format research)").arg(raw.size()));
     }
@@ -135,6 +138,7 @@ void ViewportPanel::showTimBundle(const QString& path) {
     m_blocks.clear();
     m_modelBox->setVisible(false);
     m_partCombo->setVisible(false);
+    m_scroll->setVisible(true);
     m_image->setVisible(true);
     m_list->clear();
     auto offs = sb::findTims(m_bytes.data(), m_bytes.size());
@@ -173,15 +177,16 @@ void ViewportPanel::showQmdContainer(const QString& path) {
     for (const auto& b : m_blocks) {
         QString label = QString::fromStdString(b.name);
         if (b.simple)
-            label += QString(" — %1 verts, %2 tris").arg(b.verts.size()).arg(b.faces.size());
+            label += QString(" — %1 verts, %2 faces").arg(b.verts.size()).arg(b.faces.size());
         else
-            label += QString(" — %1 verts, %2 tris (complex)").arg(b.verts.size()).arg(b.faces.size());
+            label += QString(" — %1 verts, %2 faces (complex)").arg(b.verts.size()).arg(b.faces.size());
         m_list->addItem(label);
     }
     m_info->setText(QString("%1 — %2 QMD blocks, %3 TIMs in texture bank")
                         .arg(QFileInfo(path).fileName())
                         .arg(m_blocks.size())
                         .arg(m_tex.tims.size()));
+    m_scroll->setVisible(false);
     m_image->setVisible(false);
     m_modelBox->setVisible(true);
     for (size_t i = 0; i < m_blocks.size(); ++i) {

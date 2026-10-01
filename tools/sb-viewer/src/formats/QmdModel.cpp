@@ -134,17 +134,22 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
             if (ok) {
                 face.r = r[co]; face.g = r[co + 1]; face.b = r[co + 2];
             }
-            // triangulate quads as (v0,v1,v2)+(v1,v2,v3)
+            // Quads: records are in GPU packet order (tris (v0,v1,v2)+(v1,v2,v3)),
+            // so the polygon boundary is the zigzag v0-v1-v3-v2. Reorder to the
+            // cyclic boundary and keep quads as single 4-vert faces — the PS1
+            // GPU maps a quad as one affine primitive; triangulating would
+            // create a diagonal UV seam.
             if (face.verts.size() == 4) {
+                static const int cyc[4] = {0, 1, 3, 2};
                 QmdFace q = face;
-                face.verts = {q.verts[0], q.verts[1], q.verts[2]};
-                QmdFace t2 = q;
-                t2.verts = {q.verts[1], q.verts[2], q.verts[3]};
-                out.faces.push_back(std::move(face));
-                out.faces.push_back(std::move(t2));
-            } else {
-                out.faces.push_back(std::move(face));
+                for (int j = 0; j < 4; ++j) {
+                    face.verts[j] = q.verts[cyc[j]];
+                    face.uv[j][0] = q.uv[cyc[j]][0];
+                    face.uv[j][1] = q.uv[cyc[j]][1];
+                    for (int a = 0; a < 3; ++a) face.n[j][a] = q.n[cyc[j]][a];
+                }
             }
+            out.faces.push_back(std::move(face));
         }
         p += (size_t)rs * count;
     }

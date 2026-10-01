@@ -133,6 +133,7 @@ approximate (flat-shaded approximation in the viewer).
 
 Headless viewer renders (`tools/sb-viewer --render <part3> <BLOCK> out.png`,
 `SB_PART=n` selects a single part of a complex block, `SB_NOTEX=1` disables
-textures): EMBTNK00 parts render as clean closed solids — part 0 = hull,
+textures, `SB_WIRE=1` overlays a wireframe, `SB_ROTX=deg` pre-pitches the
+model around X): EMBTNK00 parts render as clean closed solids — part 0 = hull,
 part 2 = turret + gun barrel, parts 4/5 = the two mirrored triangular tread
 rings, matching the in-game boss tank.

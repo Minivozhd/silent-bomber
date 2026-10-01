@@ -33,7 +33,8 @@ struct QmdBlock {
     bool simple = true;
     uint32_t vertCount = 0;
     std::vector<QmdVertex> verts;
-    std::vector<QmdFace> faces;      // triangulated on parse
+    std::vector<QmdFace> faces;      // 3- or 4-vert faces; quads in cyclic
+                                     // boundary order (v0,v1,v3,v2 of GPU order)
     std::vector<QmdBlock> parts;     // complex blocks: one entry per part
 };
 
