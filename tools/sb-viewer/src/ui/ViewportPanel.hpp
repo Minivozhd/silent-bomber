@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "../formats/QmdModel.hpp"
+#include "../formats/TextureBank.hpp"
 #include "../formats/TimImage.hpp"
 
 class ImageView;
@@ -33,5 +34,6 @@ private:
 
     std::vector<sb::TimImage> m_tims;
     std::vector<sb::QmdBlock> m_blocks;
+    sb::TextureBank m_tex;
     std::vector<uint8_t> m_bytes;
 };

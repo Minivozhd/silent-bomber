@@ -10,12 +10,20 @@ static int renderCli(const QString& path, const QString& blockName, const QStrin
     if (!f.open(QIODevice::ReadOnly)) return 1;
     QByteArray raw = f.readAll();
     auto blocks = sb::parseQmdContainer((const uint8_t*)raw.constData(), raw.size());
+    sb::TextureBank tex;
+    QString p1 = path;
+    p1.replace(".part3_raw.bin", ".part1_rle.bin");
+    QFile f1(p1);
+    if (f1.open(QIODevice::ReadOnly)) {
+        QByteArray raw1 = f1.readAll();
+        tex.load((const uint8_t*)raw1.constData(), raw1.size());
+    }
     for (const auto& b : blocks) {
         if (b.verts.empty()) continue;
         if (QString::fromStdString(b.name) != blockName) continue;
         ModelView view;
         view.resize(640, 640);
-        view.setModel(b.verts, b.faces);
+        view.setModel(b.verts, b.faces, &tex);
         QImage img = view.grab().toImage();
         if (!img.save(out)) return 1;
         printf("rendered %s: %zu verts, %zu tris -> %s\n",

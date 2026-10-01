@@ -63,7 +63,7 @@ ViewportPanel::ViewportPanel(QWidget* parent) : QWidget(parent) {
         if (row < 0) return;
         if (m_model->isVisible()) {
             if (row >= (int)m_blocks.size()) return;
-            m_model->setModel(m_blocks[row].verts, m_blocks[row].faces);
+            m_model->setModel(m_blocks[row].verts, m_blocks[row].faces, &m_tex);
             return;
         }
         if (row >= (int)m_tims.size()) return;
@@ -124,19 +124,32 @@ void ViewportPanel::showQmdContainer(const QString& path) {
     m_model->clear();
     m_list->clear();
     m_blocks = sb::parseQmdContainer(m_bytes.data(), m_bytes.size());
+    // textures: the sibling part1 TIM bundle of the same package
+    QString p1 = path;
+    p1.replace(".part3_raw.bin", ".part1_rle.bin");
+    QFile f1(p1);
+    if (f1.open(QIODevice::ReadOnly)) {
+        QByteArray raw1 = f1.readAll();
+        m_tex.load((const uint8_t*)raw1.constData(), raw1.size());
+    } else {
+        m_tex.tims.clear();
+    }
     for (const auto& b : m_blocks) {
         QString label = QString::fromStdString(b.name);
         if (b.simple)
             label += QString(" — %1 verts, %2 tris").arg(b.verts.size()).arg(b.faces.size());
         else
-            label += " — (complex block)";
+            label += QString(" — %1 verts, %2 tris (complex)").arg(b.verts.size()).arg(b.faces.size());
         m_list->addItem(label);
     }
-    m_info->setText(QString("%1 — %2 QMD blocks").arg(QFileInfo(path).fileName()).arg(m_blocks.size()));
+    m_info->setText(QString("%1 — %2 QMD blocks, %3 TIMs in texture bank")
+                        .arg(QFileInfo(path).fileName())
+                        .arg(m_blocks.size())
+                        .arg(m_tex.tims.size()));
     m_image->setVisible(false);
     m_model->setVisible(true);
     for (size_t i = 0; i < m_blocks.size(); ++i) {
-        if (m_blocks[i].simple && !m_blocks[i].verts.empty()) {
+        if (!m_blocks[i].verts.empty()) {
             m_list->setCurrentRow((int)i);
             break;
         }

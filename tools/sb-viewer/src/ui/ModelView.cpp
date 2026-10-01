@@ -18,9 +18,11 @@ void ModelView::clear() {
 }
 
 void ModelView::setModel(const std::vector<sb::QmdVertex>& verts,
-                         const std::vector<sb::QmdFace>& faces) {
+                         const std::vector<sb::QmdFace>& faces,
+                         const sb::TextureBank* tex) {
     m_verts = verts;
     m_faces = faces;
+    m_tex = tex;
     render();
 }
 
@@ -77,19 +79,19 @@ void ModelView::render() {
     float cx = (mx[0] + mn[0]) / 2, cy = (mx[1] + mn[1]) / 2;
 
     std::vector<float> zb((size_t)W * H, -1e30f);
+    std::vector<QRgb> img((size_t)W * H, m_img.pixel(0, 0));
 
     auto put = [&](int x, int y, float z, QRgb col) {
         if (x < 0 || y < 0 || x >= W || y >= H) return;
         size_t j = (size_t)y * W + x;
         if (z > zb[j]) {
             zb[j] = z;
-            m_img.setPixel(x, y, col);
+            img[j] = col;
         }
     };
 
     for (const auto& f : m_faces) {
         if (f.verts.size() < 3) continue;
-        // screen-space points (y flipped: world up -> screen up)
         std::vector<std::array<float,3>> pts;
         for (uint32_t vi : f.verts) {
             const auto& p = pv[vi];
@@ -109,30 +111,59 @@ void ModelView::render() {
             lam = std::max(0.15f, std::min(1.0f,
                 (nx * 0.4f + ny * 0.8f + nz * 0.45f) / ln * 0.5f + 0.55f));
         }
-        QRgb col = qRgb(std::min(255, (int)(f.r * lam)),
-                        std::min(255, (int)(f.g * lam)),
-                        std::min(255, (int)(f.b * lam)));
+        QRgb flat = qRgb(std::min(255, (int)(f.r * lam)),
+                         std::min(255, (int)(f.g * lam)),
+                         std::min(255, (int)(f.b * lam)));
 
-        // scanline fill (tris)
+        // texture page origin in pixels (tpage: X in 64-halfword units, Y in 256 lines)
+        int bppMode = (f.tpage >> 7) & 3;             // 0=4bpp, 1=8bpp, 2=16bpp
+        int pxPerWord = bppMode == 0 ? 4 : bppMode == 1 ? 2 : 1;
+        int pageX = (f.tpage & 0xF) * 64 * pxPerWord;
+        int pageY = ((f.tpage >> 4) & 1) * 256;
+        bool tex = f.textured && m_tex && f.tpage != 0;
+
+        // scanline fill with barycentric UV interpolation
         float ymin = std::min({pts[0][1], pts[1][1], pts[2][1]});
         float ymax = std::max({pts[0][1], pts[1][1], pts[2][1]});
         for (int y = std::max(0, (int)ymin); y <= std::min(H - 1, (int)ymax); ++y) {
-            std::vector<std::pair<float,float>> xs;  // (x, z)
+            struct Span { float x0, z0, u0, v0, x1, z1, u1, v1; };
+            std::vector<Span> xs;
             for (int i = 0; i < 3; ++i) {
                 const auto& pa = pts[i];
                 const auto& pb = pts[(i + 1) % 3];
                 if ((pa[1] <= y) != (pb[1] <= y)) {
                     float t = (y - pa[1]) / (pb[1] - pa[1] + 1e-12f);
-                    xs.push_back({pa[0] + t * (pb[0] - pa[0]), pa[2] + t * (pb[2] - pa[2])});
+                    float ua = f.uv[i][0], va = f.uv[i][1];
+                    float ub = f.uv[(i + 1) % 3][0], vb = f.uv[(i + 1) % 3][1];
+                    xs.push_back({pa[0] + t * (pb[0] - pa[0]),
+                                  pa[2] + t * (pb[2] - pa[2]),
+                                  ua + t * (ub - ua), va + t * (vb - va),
+                                  0, 0, 0, 0});
                 }
             }
             if (xs.size() != 2) continue;
-            if (xs[0].first > xs[1].first) std::swap(xs[0], xs[1]);
-            for (int x = std::max(0, (int)xs[0].first); x <= std::min(W - 1, (int)xs[1].first); ++x) {
-                float t = (x - xs[0].first) / (xs[1].first - xs[0].first + 1e-12f);
-                put(x, y, xs[0].second + t * (xs[1].second - xs[0].second), col);
+            if (xs[0].x0 > xs[1].x0) std::swap(xs[0], xs[1]);
+            int x0 = std::max(0, (int)xs[0].x0), x1 = std::min(W - 1, (int)xs[1].x0);
+            for (int x = x0; x <= x1; ++x) {
+                float t = (x - xs[0].x0) / (xs[1].x0 - xs[0].x0 + 1e-12f);
+                float z = xs[0].z0 + t * (xs[1].z0 - xs[0].z0);
+                if (!tex) {
+                    put(x, y, z, flat);
+                } else {
+                    float u = xs[0].u0 + t * (xs[1].u0 - xs[0].u0);
+                    float v = xs[0].v0 + t * (xs[1].v0 - xs[0].v0);
+                    uint8_t c4[4];
+                    m_tex->sample(pageX + (int)u, pageY + (int)v, f.clut, c4);
+                    if (c4[3] == 0) continue;  // transparent texel
+                    // PS1 texture modulation: texel * color/128, then lambert
+                    auto mod = [&](int i, uint8_t mc) -> int {
+                        return std::min(255, (int)(c4[i] * (mc / 128.0f) * lam));
+                    };
+                    put(x, y, z, qRgb(mod(0, f.r), mod(1, f.g), mod(2, f.b)));
+                }
             }
         }
     }
+    m_img = QImage((const uchar*)img.data(), W, H, W * 4, QImage::Format_RGB32).copy();
     update();
 }

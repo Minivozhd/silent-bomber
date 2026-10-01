@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "../formats/QmdModel.hpp"
+#include "../formats/TextureBank.hpp"
 
 /// Software-rasterized model view (PS1 polycounts are tiny; no GL needed —
 /// macOS 26 has no AGL and we avoid the QtOpenGL dependency entirely).
@@ -15,7 +16,8 @@ public:
     explicit ModelView(QWidget* parent = nullptr);
 
     void setModel(const std::vector<sb::QmdVertex>& verts,
-                  const std::vector<sb::QmdFace>& faces);
+                  const std::vector<sb::QmdFace>& faces,
+                  const sb::TextureBank* tex = nullptr);
     void clear();
 
 protected:
@@ -29,6 +31,7 @@ private:
 
     std::vector<sb::QmdVertex> m_verts;
     std::vector<sb::QmdFace> m_faces;
+    const sb::TextureBank* m_tex = nullptr;
     QImage m_img;
     float m_yaw = 0.6f, m_pitch = -0.4f, m_zoom = 1.0f;
     QPoint m_lastPos;

@@ -21,6 +21,8 @@ struct QmdFace {
     std::vector<uint32_t> verts;     // 3 or 4 vertex indices
     uint8_t r = 200, g = 170, b = 90; // flat / first corner color
     bool textured = false;
+    uint8_t uv[4][2] = {};           // per-corner texel coords
+    uint16_t clut = 0, tpage = 0;    // GPU words
 };
 
 struct QmdBlock {

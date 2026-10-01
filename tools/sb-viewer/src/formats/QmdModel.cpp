@@ -103,16 +103,48 @@ static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
         if (plen < 0) break;
         uint8_t cmd = (p + plen + 4 <= streamEnd) ? data[p + plen + 3] : 0;
         std::vector<uint32_t> vs;
+        size_t uvOff = 0;
         if (cmd == 0x2C || cmd == 0x24) {
             int npair = (plen - 8 - 12) / 4;
             vs.push_back(rd16(data + p));
             for (int j = 0; j < npair; ++j) vs.push_back(rd16(data + p + 8 + 4 * j));
+            uvOff = p + 8 + 4 * npair;
         } else {  // 0x3C / 0x34 / cmd-less first record
             int npair = (cmd == 0) ? 3 : (plen - 12) / 4;
             for (int j = 0; j < npair; ++j) vs.push_back(rd16(data + p + 4 * j));
+            uvOff = p + 4 * npair;
         }
         for (auto& v : vs) if (v >= out.verts.size()) v = 0;
         QmdFace face;
+        face.textured = (cmd != 0);
+        if (face.textured && uvOff + 10 <= streamEnd) {
+            if (cmd == 0x24) {  // 10B uvblk: uv0,uv1,cba,uv2,tpage
+                face.uv[0][0] = data[uvOff]; face.uv[0][1] = data[uvOff + 1];
+                face.uv[1][0] = data[uvOff + 2]; face.uv[1][1] = data[uvOff + 3];
+                face.clut = rd16(data + uvOff + 4);
+                face.uv[2][0] = data[uvOff + 6]; face.uv[2][1] = data[uvOff + 7];
+                face.tpage = rd16(data + uvOff + 8);
+            } else {            // 12B uvblk: uv0,uv1,uv2,cba,uv3,tpage
+                for (int j = 0; j < 3; ++j) {
+                    face.uv[j][0] = data[uvOff + 2 * j];
+                    face.uv[j][1] = data[uvOff + 2 * j + 1];
+                }
+                face.clut = rd16(data + uvOff + 6);
+                face.uv[3][0] = data[uvOff + 8]; face.uv[3][1] = data[uvOff + 9];
+                face.tpage = rd16(data + uvOff + 10);
+            }
+            // neutral gouraud unless 0x2C/0x24 (flat with literal color)
+            if (cmd == 0x2C || cmd == 0x24) {
+                face.r = data[p + 4];
+                face.g = data[p + 5];
+                face.b = data[p + 6];
+            } else {
+                // trailer rgb+cmd word at p+plen
+                face.r = data[p + plen];
+                face.g = data[p + plen + 1];
+                face.b = data[p + plen + 2];
+            }
+        }
         auto emit = [&](std::vector<uint32_t> idx) {
             if (idx.size() == 3) { face.verts = idx; out.faces.push_back(face); }
         };
@@ -180,6 +212,22 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
             }
             if (face.verts.empty()) continue;
             face.textured = (type >= 8);
+            // UV block for textured types (uv = u8 pairs, cba/tpage = u16)
+            if (type == 8 || type == 10) {       // quad: [8B idx][12B uvblk][4B rgb+cmd][8B nidx]
+                for (int j = 0; j < 3; ++j) {
+                    face.uv[j][0] = r[8 + 2 * j];
+                    face.uv[j][1] = r[8 + 2 * j + 1];
+                }
+                face.clut = rd16(r + 14);
+                face.uv[3][0] = r[16]; face.uv[3][1] = r[17];
+                face.tpage = rd16(r + 18);
+            } else if (type == 9 || type == 11) { // tri: [6B idx][10B uvblk][4B rgb+cmd][8B]
+                face.uv[0][0] = r[6]; face.uv[0][1] = r[7];
+                face.uv[1][0] = r[8]; face.uv[1][1] = r[9];
+                face.clut = rd16(r + 10);
+                face.uv[2][0] = r[12]; face.uv[2][1] = r[13];
+                face.tpage = rd16(r + 14);
+            }
             bool ok;
             int co = colorOff(type, 0, ok);
             if (ok) {
