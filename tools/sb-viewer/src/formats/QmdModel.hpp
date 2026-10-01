@@ -23,6 +23,8 @@ struct QmdFace {
     bool textured = false;
     uint8_t uv[4][2] = {};           // per-corner texel coords
     uint16_t clut = 0, tpage = 0;    // GPU words
+    float n[4][3] = {};              // stored per-corner normals (s8, normalized)
+    bool hasNormals = false;
 };
 
 struct QmdBlock {

@@ -98,7 +98,7 @@ void ModelView::render() {
             pts.push_back({(p[0] - cx) * scale + W / 2.0f,
                            -(p[1] - cy) * scale + H / 2.0f, p[2]});
         }
-        // flat normal (world space) for lambert
+        // flat normal (world space) for lambert fallback
         const auto& a = m_verts[f.verts[0]];
         const auto& b = m_verts[f.verts[1]];
         const auto& c = m_verts[f.verts[2]];
@@ -111,6 +111,20 @@ void ModelView::render() {
             lam = std::max(0.15f, std::min(1.0f,
                 (nx * 0.4f + ny * 0.8f + nz * 0.45f) / ln * 0.5f + 0.55f));
         }
+        // stored per-corner normals (data, rotated into view space)
+        float intens[3] = {lam, lam, lam};
+        if (f.hasNormals) {
+            static const float lx = 0.4f / 1.14f, ly = 0.8f / 1.14f, lz = 0.45f / 1.14f;
+            for (int j = 0; j < 3; ++j) {
+                // apply the same yaw/pitch as vertices
+                float x1 = f.n[j][0] * ca + f.n[j][2] * sa;
+                float z1 = -f.n[j][0] * sa + f.n[j][2] * ca;
+                float y2 = f.n[j][1] * cp - z1 * sp;
+                float z2 = f.n[j][1] * sp + z1 * cp;
+                float dot = x1 * lx + y2 * ly + z2 * lz;
+                intens[j] = std::max(0.15f, std::min(1.0f, dot * 0.5f + 0.55f));
+            }
+        }
         QRgb flat = qRgb(std::min(255, (int)(f.r * lam)),
                          std::min(255, (int)(f.g * lam)),
                          std::min(255, (int)(f.b * lam)));
@@ -122,11 +136,11 @@ void ModelView::render() {
         int pageY = ((f.tpage >> 4) & 1) * 256;
         bool tex = f.textured && m_tex && f.tpage != 0;
 
-        // scanline fill with barycentric UV interpolation
+        // scanline fill with barycentric UV + intensity interpolation
         float ymin = std::min({pts[0][1], pts[1][1], pts[2][1]});
         float ymax = std::max({pts[0][1], pts[1][1], pts[2][1]});
         for (int y = std::max(0, (int)ymin); y <= std::min(H - 1, (int)ymax); ++y) {
-            struct Span { float x0, z0, u0, v0, x1, z1, u1, v1; };
+            struct Span { float x0, z0, u0, v0, i0, x1, z1, u1, v1, i1; };
             std::vector<Span> xs;
             for (int i = 0; i < 3; ++i) {
                 const auto& pa = pts[i];
@@ -138,7 +152,8 @@ void ModelView::render() {
                     xs.push_back({pa[0] + t * (pb[0] - pa[0]),
                                   pa[2] + t * (pb[2] - pa[2]),
                                   ua + t * (ub - ua), va + t * (vb - va),
-                                  0, 0, 0, 0});
+                                  intens[i] + t * (intens[(i + 1) % 3] - intens[i]),
+                                  0, 0, 0, 0, 0});
                 }
             }
             if (xs.size() != 2) continue;
@@ -147,8 +162,21 @@ void ModelView::render() {
             for (int x = x0; x <= x1; ++x) {
                 float t = (x - xs[0].x0) / (xs[1].x0 - xs[0].x0 + 1e-12f);
                 float z = xs[0].z0 + t * (xs[1].z0 - xs[0].z0);
+                // barycentric intensity: weights from the triangle's edge ratios
+                float I = lam;
+                if (f.hasNormals) {
+                    // approximate: average of the two edge-point intensities, then
+                    // interpolate horizontally by the same t
+                    I = (xs[0].i0 + t * (xs[1].i0 - xs[0].i0));
+                }
                 if (!tex) {
-                    put(x, y, z, flat);
+                    if (f.hasNormals) {
+                        put(x, y, z, qRgb(std::min(255, (int)(f.r * I)),
+                                          std::min(255, (int)(f.g * I)),
+                                          std::min(255, (int)(f.b * I))));
+                    } else {
+                        put(x, y, z, flat);
+                    }
                 } else {
                     float u = xs[0].u0 + t * (xs[1].u0 - xs[0].u0);
                     float v = xs[0].v0 + t * (xs[1].v0 - xs[0].v0);
@@ -157,7 +185,7 @@ void ModelView::render() {
                     if (c4[3] == 0) continue;  // transparent texel
                     // PS1 texture modulation: texel * color/128, then lambert
                     auto mod = [&](int i, uint8_t mc) -> int {
-                        return std::min(255, (int)(c4[i] * (mc / 128.0f) * lam));
+                        return std::min(255, (int)(c4[i] * (mc / 128.0f) * I));
                     };
                     put(x, y, z, qRgb(mod(0, f.r), mod(1, f.g), mod(2, f.b)));
                 }

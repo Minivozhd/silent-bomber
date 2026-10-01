@@ -102,6 +102,10 @@ static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
         }
         if (plen < 0) break;
         uint8_t cmd = (p + plen + 4 <= streamEnd) ? data[p + plen + 3] : 0;
+        if (cmd != 0x3C && cmd != 0x34 && cmd != 0x2C && cmd != 0x24) {
+            p += plen + 4;  // keep scanning rather than producing garbage faces
+            continue;
+        }
         std::vector<uint32_t> vs;
         size_t uvOff = 0;
         if (cmd == 0x2C || cmd == 0x24) {
@@ -109,12 +113,18 @@ static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
             vs.push_back(rd16(data + p));
             for (int j = 0; j < npair; ++j) vs.push_back(rd16(data + p + 8 + 4 * j));
             uvOff = p + 8 + 4 * npair;
-        } else {  // 0x3C / 0x34 / cmd-less first record
-            int npair = (cmd == 0) ? 3 : (plen - 12) / 4;
+        } else {  // 0x3C / 0x34
+            int npair = (plen - 12) / 4;
             for (int j = 0; j < npair; ++j) vs.push_back(rd16(data + p + 4 * j));
             uvOff = p + 4 * npair;
         }
-        for (auto& v : vs) if (v >= out.verts.size()) v = 0;
+        // skip records with out-of-range indices (clamping to 0 draws spikes)
+        bool bad = false;
+        for (const auto& v : vs) if (v >= out.verts.size()) { bad = true; break; }
+        if (bad || vs.size() < 3) {
+            p += plen + 4;
+            continue;
+        }
         QmdFace face;
         face.textured = (cmd != 0);
         if (face.textured && uvOff + 10 <= streamEnd) {
@@ -212,6 +222,22 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
             }
             if (face.verts.empty()) continue;
             face.textured = (type >= 8);
+            // stored per-corner normals for the untextured types (s8 x3, normalized)
+            if (type == 0 || type == 2) {          // [8B idx][12B: 4x3 normals][...]
+                face.hasNormals = true;
+                for (int j = 0; j < 4; ++j) {
+                    int8_t nx = (int8_t)r[8 + 3 * j], ny = (int8_t)r[8 + 3 * j + 1], nz = (int8_t)r[8 + 3 * j + 2];
+                    float l = std::sqrt((float)(nx * nx + ny * ny + nz * nz));
+                    if (l > 1e-6f) { face.n[j][0] = nx / l; face.n[j][1] = ny / l; face.n[j][2] = nz / l; }
+                }
+            } else if (type == 1 || type == 3) {   // [idx][9B: 3x3 normals(+pad)]
+                face.hasNormals = true;
+                for (int j = 0; j < 3; ++j) {
+                    int8_t nx = (int8_t)r[6 + 3 * j], ny = (int8_t)r[6 + 3 * j + 1], nz = (int8_t)r[6 + 3 * j + 2];
+                    float l = std::sqrt((float)(nx * nx + ny * ny + nz * nz));
+                    if (l > 1e-6f) { face.n[j][0] = nx / l; face.n[j][1] = ny / l; face.n[j][2] = nz / l; }
+                }
+            }
             // UV block for textured types (uv = u8 pairs, cba/tpage = u16)
             if (type == 8 || type == 10) {       // quad: [8B idx][12B uvblk][4B rgb+cmd][8B nidx]
                 for (int j = 0; j < 3; ++j) {
