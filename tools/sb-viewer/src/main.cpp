@@ -11,7 +11,7 @@ static int renderCli(const QString& path, const QString& blockName, const QStrin
     QByteArray raw = f.readAll();
     auto blocks = sb::parseQmdContainer((const uint8_t*)raw.constData(), raw.size());
     for (const auto& b : blocks) {
-        if (!b.simple || b.verts.empty()) continue;
+        if (b.verts.empty()) continue;
         if (QString::fromStdString(b.name) != blockName) continue;
         ModelView view;
         view.resize(640, 640);

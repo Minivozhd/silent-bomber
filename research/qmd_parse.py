@@ -89,9 +89,12 @@ class Block:
     #   type 4 = quad, colors only (no normals), 24B   [VERIFIED size]
     #   type 5 = tri,  colors only (no normals), 24B   [VERIFIED size]
     #   type 6 = two-quad variant, 28B                 [VERIFIED size]
-    #   type 8 = quad textured gouraud (GT4, cmd 0x3C), 42B [VERIFIED size]
-    #   type 10 = quad textured flat (FT4, cmd 0x2C), 36B    [VERIFIED size]
-    REC_SIZE = {0: 36, 1: 28, 2: 24, 3: 20, 4: 24, 5: 24, 6: 28, 8: 42, 10: 36}
+    #   type 8 = quad textured gouraud (GT4, cmd 0x3C), 32B [VERIFIED size+layout]
+    #   type 9 = tri  textured gouraud (GT3, cmd 0x34), 28B [VERIFIED size+layout]
+    #   type 10 = quad textured flat (FT4, cmd 0x2C), 32B   [VERIFIED size+layout]
+    #   type 10 = quad textured flat (FT4, cmd 0x2C), 32B   [VERIFIED size+layout]
+    #   type 11 = tri textured flat (FT3, cmd 0x24), 28B    [VERIFIED size+layout]
+    REC_SIZE = {0: 36, 1: 28, 2: 24, 3: 20, 4: 24, 5: 24, 6: 28, 8: 32, 9: 28, 10: 32, 11: 28}
 
     def faces(self):
         """simple block section A -> list of polys:
@@ -137,14 +140,36 @@ class Block:
                     idx = [u16(self.buf, r+2*j) >> 1 for j in range(4)]
                     col = [tuple(self.buf[r+24:r+28])]
                     out.append((idx, 'p4-s', col, r))
-                elif typ == 8:    # quad textured gouraud: idx, nrm, col, uv, cba, tpage
+                elif typ == 8:    # GT4: idx, uv0,uv1,uv2,cba,uv3,tpage, rgb+cmd, 4 nidx
                     idx = [u16(self.buf, r+2*j) >> 1 for j in range(4)]
-                    col = [tuple(self.buf[r+20+4*j:r+24+4*j]) for j in range(4)]
-                    out.append((idx, 'p4-t', col, r))
-                elif typ == 10:   # quad textured flat: idx, nrm, col, uv, cba, tpage
+                    uvs = [tuple(self.buf[r+8+2*j:r+10+2*j]) for j in range(3)]
+                    cba = u16(self.buf, r+14)
+                    uvs.append(tuple(self.buf[r+16:r+18]))
+                    tpage = u16(self.buf, r+18)
+                    nidx = [u16(self.buf, r+24+2*j) >> 1 for j in range(4)]
+                    out.append((idx, 'p4-t', [(cba, tpage)], r))
+                elif typ == 9:    # GT3: idx, uv0,uv1,cba,uv2,tpage, rgb+cmd, 3 nidx + pad
+                    idx = [u16(self.buf, r+2*j) >> 1 for j in range(3)]
+                    uvs = [tuple(self.buf[r+6+2*j:r+8+2*j]) for j in range(2)]
+                    cba = u16(self.buf, r+10)
+                    uvs.append(tuple(self.buf[r+12:r+14]))
+                    tpage = u16(self.buf, r+14)
+                    nidx = [u16(self.buf, r+20+2*j) >> 1 for j in range(3)]
+                    out.append((idx, 'tri-t', [(cba, tpage)], r))
+                elif typ == 10:   # FT4: idx, uv0,uv1,uv2,cba,uv3,tpage, rgb+cmd, 8B tail
                     idx = [u16(self.buf, r+2*j) >> 1 for j in range(4)]
-                    col = [tuple(self.buf[r+20:r+24])]
-                    out.append((idx, 'p4-tf', col, r))
+                    uvs = [tuple(self.buf[r+8+2*j:r+10+2*j]) for j in range(3)]
+                    cba = u16(self.buf, r+14)
+                    uvs.append(tuple(self.buf[r+16:r+18]))
+                    tpage = u16(self.buf, r+18)
+                    out.append((idx, 'p4-tf', [(cba, tpage)], r))
+                elif typ == 11:   # FT3: idx, uv0,uv1,cba,uv2,tpage, rgb+cmd, 8B tail
+                    idx = [u16(self.buf, r+2*j) >> 1 for j in range(3)]
+                    uvs = [tuple(self.buf[r+6+2*j:r+8+2*j]) for j in range(2)]
+                    cba = u16(self.buf, r+10)
+                    uvs.append(tuple(self.buf[r+12:r+14]))
+                    tpage = u16(self.buf, r+14)
+                    out.append((idx, 'tri-tf', [(cba, tpage)], r))
                 else:
                     break
             p += sz*count
@@ -299,39 +324,76 @@ def export_obj(path, verts, tris, note=''):
         for t in tris:
             f.write('f ' + ' '.join(str(i+1) for i in t) + '\n')
 
-# ----------------------------------------------------------------- complex render (best effort)
+# ----------------------------------------------------------------- complex blocks
+def _cba_ok(c): return (c >> 6) < 512
+def _tp_ok(t): return (t & 0xF) < 16 and t < 0x200
+
+def complex_records(buf, base, stream_start, stream_end):
+    """Final model (2026-10-01): continuous stream of [u32 rgb+cmd][payload] records.
+    Payloads:
+      cmd 0x3C: [4 x (u16 v, u16 n)][uvblk 12B]            -> quad
+      cmd 0x34: [3 x (u16 v, u16 n)][uvblk 12B]            -> tri
+      cmd 0x2C: [u16 v0][u16 n0][u32 color][(v,n)...][uvblk 12B] -> flat-colored N-gon
+      cmd 0x24: [u16 v0][u16 n0][u32 color][2 (v,n)][uvblk 10B]  -> flat-colored tri
+    uvblk (12B) = [uv0][uv1][uv2][cba][uv3][tpage]; (10B) = [uv0][uv1][cba][uv2][tpage].
+    Payload length is detected by scanning for the uvblock signature
+    (valid cba word at +6, valid tpage at +10) followed by next cmd / stream end."""
+    recs = []
+    p = stream_start
+    while p < stream_end:
+        found = None
+        for plen in range(12, 64, 2):
+            uvo = p + plen - 12
+            if uvo + 12 > stream_end:
+                break
+            if _cba_ok(u16(buf, uvo+6)) and _tp_ok(u16(buf, uvo+10)):
+                nxt = uvo + 12
+                if nxt >= stream_end - 4 or buf[nxt:nxt+3] == b'\x80\x80\x80':
+                    found = plen
+                    break
+        if found is None:
+            break
+        cmd = buf[p+found+3] if p+found+4 <= stream_end else None
+        recs.append({'off': p, 'plen': found, 'cmd': cmd})
+        p += found + 4
+    return recs
+
 def complex_render(block, path):
-    """HYPOTHESIS: v -> per-part? global s16 (x,z) pool at f1 slices, y from f2 pool.
-    Currently renders the global stream with global pools [UNRESOLVED mapping]."""
+    """Final model: verts = global pool f1 (s16 pairs) + f2 (s16 y), raw u16 index.
+    Parts share one global vertex space (part3 of EMBTNK00 renders as a coherent plate)."""
+    buf = block.buf
     parts = block.parts()
     xz0 = min(p['xz'] for p in parts)
     y0 = min(p['y'] for p in parts)
     nrm0 = min(p['nrm'] for p in parts)
-    f40 = min(p['f4'] for p in parts)
     xz_n = (nrm0 - xz0) // 4
-    y_n = (f40 - y0) // 2
-    xz = [(s16(block.buf, xz0+4*i), s16(block.buf, xz0+4*i+2)) for i in range(xz_n)]
-    yy = [s16(block.buf, y0+2*i) for i in range(y_n)]
-    verts, tris = [], []
-    vmap = {}
-    for rec in block.prim_records():
-        idx = []
-        for v, n in rec['pairs']:
-            vi = v >> 1
-            if vi >= len(xz):
-                vi = 0
-            key = vi
-            if key not in vmap:
-                vmap[key] = len(verts)
-                y = yy[vi] if vi < len(yy) else 0
-                verts.append((xz[vi][0], y, xz[vi][1]))
-            idx.append(vmap[key])
-        if len(idx) == 4:
-            tris += [[idx[0], idx[1], idx[2]], [idx[1], idx[2], idx[3]]]
-        elif len(idx) == 6:
-            tris += [[idx[0], idx[1], idx[2]], [idx[3], idx[4], idx[5]]]
-        else:
-            tris.append(idx)
+    y_n = (nrm0 - y0) // 2
+    xz = [(s16(buf, xz0+4*i), s16(buf, xz0+4*i+2)) for i in range(xz_n)]
+    yy = [s16(buf, y0+2*i) for i in range(y_n)]
+    verts = [(xz[i][0], yy[i] if i < len(yy) else 0, xz[i][1]) for i in range(xz_n)]
+    stream_start = block.base + 0x24*len(parts)
+    recs = complex_records(buf, block.base, stream_start, xz0)
+    tris = []
+    for r in recs:
+        p, cmd = r['off'], r['cmd']
+        if cmd in (0x2c, 0x24):
+            npair = (r['plen'] - 8 - 12) // 4
+            vs = [u16(buf, p)] + [u16(buf, p+8+4*j) for j in range(npair)]
+        elif cmd in (0x3c, 0x34):
+            npair = (r['plen'] - 12) // 4
+            vs = [u16(buf, p+4*j) for j in range(npair)]
+        else:  # first cmd-less payload: 3-pair plain tri
+            vs = [u16(buf, p+4*j) for j in range(3)]
+        vs = [v if v < xz_n else 0 for v in vs]
+        if cmd in (0x3c, 0x2c) and len(vs) >= 4:
+            tris += [[vs[0], vs[1], vs[2]], [vs[1], vs[2], vs[3]]]
+            for j in range(4, len(vs)):
+                tris.append([vs[0], vs[j-1], vs[j]])
+        elif len(vs) == 3:
+            tris.append(vs)
+        elif len(vs) > 3:
+            for j in range(1, len(vs)-1):
+                tris.append([vs[0], vs[j], vs[j+1]])
     render(verts, tris, path)
     return len(verts), len(tris)
 
@@ -388,8 +450,25 @@ def render_demo(here):
     export_obj(os.path.join(rd, 'X1LJUT00.obj'), vs, tris, 'X1LJUT00 grpA_00.part2')
     print('X1LJUT00:', len(vs), 'verts', len(tris), 'tris')
     b = Block(buf2, 0x2DC)
-    nv, nt = complex_render(b, os.path.join(rd, 'C1LJUT00.png'))
-    print('C1LJUT00 (best-effort):', nv, 'verts', nt, 'tris')
+    nv, nt = complex_render(b, os.path.join(rd, 'C1LJUT00_complex.png'))
+    print('C1LJUT00:', nv, 'verts', nt, 'tris')
+    # complex multi-part models
+    b = Block(buf, 0x16428)  # EMBTNK00 (P01)
+    nv, nt = complex_render(b, os.path.join(rd, 'EMBTNK00_complex.png'))
+    print('EMBTNK00:', nv, 'verts', nt, 'tris')
+    # textured-type block (types 8/9/10) from A00
+    import re
+    bufA = open(os.path.join(out, 'A00.part3_raw.bin'), 'rb').read()
+    o0 = [o for o in re.finditer(b'QMD ', bufA) if bufA[o.start()+4:o.start()+12] == b'CMFANR00'][0].start()
+    b = Block(bufA, o0)
+    vs = b.vertices()
+    tris, cols = simple_tris(b.faces())
+    render(vs, tris, os.path.join(rd, 'CMFANR00.png'))
+    export_obj(os.path.join(rd, 'CMFANR00.obj'), vs, tris, 'CMFANR00 A00.part3')
+    print('CMFANR00:', len(vs), 'verts', len(tris), 'tris')
+    b = Block(bufA, 0xe034)  # CMHANR00 (A00, complex)
+    nv, nt = complex_render(b, os.path.join(rd, 'CMHANR00_complex.png'))
+    print('CMHANR00:', nv, 'verts', nt, 'tris')
 
 if __name__ == '__main__':
     here = os.path.dirname(os.path.abspath(__file__))
