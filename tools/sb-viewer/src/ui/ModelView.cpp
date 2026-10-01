@@ -10,6 +10,12 @@ ModelView::ModelView(QWidget* parent) : QWidget(parent) {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
+void ModelView::applyEnvCam() {
+    if (const char* e = getenv("SB_YAW")) m_yaw = atof(e);
+    if (const char* e = getenv("SB_PITCH")) m_pitch = atof(e);
+    if (const char* e = getenv("SB_ZOOM")) m_zoom = atof(e);
+}
+
 void ModelView::clear() {
     m_verts.clear();
     m_faces.clear();
@@ -53,6 +59,7 @@ void ModelView::paintEvent(QPaintEvent*) {
 }
 
 void ModelView::render() {
+    applyEnvCam();
     int W = std::max(320, width()), H = std::max(240, height());
     m_img = QImage(W, H, QImage::Format_RGB32);
     m_img.fill(QColor(24, 24, 32));

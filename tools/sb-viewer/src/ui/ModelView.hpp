@@ -34,6 +34,7 @@ private:
     const sb::TextureBank* m_tex = nullptr;
     QImage m_img;
     float m_yaw = 0.6f, m_pitch = -0.4f, m_zoom = 1.0f;
+    void applyEnvCam();  // SB_YAW/SB_PITCH/SB_ZOOM overrides (headless shots)
     QPoint m_lastPos;
     bool m_dragging = false;
 };

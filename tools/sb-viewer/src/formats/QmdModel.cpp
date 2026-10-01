@@ -221,7 +221,11 @@ static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
         sub.offset = boff + eoff - baseOff;
         sub.simple = false;
         sub.vertCount = count;
-        bool poolY = swapYzMode() == 1;  // complex default: y from the pair
+        // complex blocks: y from the pair's 2nd half, z from the s16 pool
+        // (VERIFIED: hull and hover-skirt are both flat this way; normals
+        // (nx=nrm.lo, ny=nrm.hi, nz=f4) match geometric at |dot|=0.997).
+        // SB_SWAPYZ=1 forces y-from-pool for A/B tests.
+        bool poolY = swapYzMode() == 1;
         for (uint32_t j = 0; j < count; ++j) {
             QmdVertex v;
             v.x = rds16(data + vb + 4 * j);
