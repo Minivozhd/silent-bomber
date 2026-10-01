@@ -69,6 +69,7 @@ ViewportPanel::ViewportPanel(QWidget* parent) : QWidget(parent) {
     m_split->addWidget(modelBox);
     m_split->setStretchFactor(1, 1);
     m_split->setStretchFactor(2, 1);
+    lay->addWidget(m_split);
 
     connect(m_list, &QListWidget::currentRowChanged, this, [this](int row) {
         if (row < 0) return;
@@ -81,7 +82,7 @@ ViewportPanel::ViewportPanel(QWidget* parent) : QWidget(parent) {
             } else {
                 m_partCombo->blockSignals(true);
                 m_partCombo->clear();
-                m_partCombo->addItem(QString("all %1 parts (assembled)").arg(b.parts.size()));
+                m_partCombo->addItem(QString("all %1 parts (raw - poses overlap)").arg(b.parts.size()));
                 for (size_t i = 0; i < b.parts.size(); ++i)
                     m_partCombo->addItem(QString("part %1 — %2 verts, %3 faces")
                                              .arg(i).arg(b.parts[i].verts.size()).arg(b.parts[i].faces.size()));

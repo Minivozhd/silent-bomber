@@ -46,8 +46,8 @@ Vertex indices are stored ×2 (read `u16 >> 1`). Record layouts:
 | 4 | quad, gouraud, no normals | 24B | 4×u16 idx, 4×4B colors (color layout approximate) |
 | 5 | tri, gouraud, no normals | 24B | 3×u16 idx, 3×4B colors (approximate) |
 | 6 | two-quad strip | 28B | 2×(4×u16 idx), 1×4B color (approximate) |
-| 8 | quad, textured gouraud (GT4, cmd 0x3C) | 32B | 4×u16 idx, uv0,uv1,uv2,cba,uv3,tpage (12B), rgb+cmd, 4×u16 nidx×2 |
-| 9 | tri, textured gouraud (GT3, cmd 0x34) | 28B | 3×u16 idx, uv0,uv1,cba,uv2,tpage (10B), rgb+cmd, 3×u16 nidx×2 + pad |
+| 8 | quad, textured gouraud (GT4, cmd 0x3C) | 32B | 4×u16 idx, uv0,uv1,uv2,cba,uv3,tpage (12B), rgb+cmd, 4×u16 nidx×2 [VERIFIED: nidx = per-corner normal indices into the part's normal pool, avg |dot| vs geometric = 0.997] |
+| 9 | tri, textured gouraud (GT3, cmd 0x34) | 28B | 3×u16 idx, uv0,uv1,cba,uv2,tpage (10B), rgb+cmd, 3×u16 nidx×2 + pad [VERIFIED same] |
 | 10 | quad, textured flat (FT4, cmd 0x2C) | 32B | 4×u16 idx, uv0,uv1,uv2,cba,uv3,tpage (12B), rgb+cmd, 8B tail |
 | 11 | tri, textured flat (FT3, cmd 0x24) | 28B | 3×u16 idx, uv0,uv1,cba,uv2,tpage (10B), rgb+cmd, 8B tail |
 
@@ -110,9 +110,9 @@ of EMBTNK00). [VERIFIED]
 frame (x, y=pair1, z=poolC). [VERIFIED exactly on EMBTNK00 prims 0-1; every
 slot is unit-length 4096 +/- 1]. The bbox field is likewise `(cx, cy, cz, r)`
 with cy = pair1-pool center, cz = poolC center. The per-slot ordering vs. prim
-order and the 8B record tails of types 10/11 (per-corner normal indices for
-gouraud types 8/9 ARE in the tail as u16 x2) remain [PARTIALLY RESOLVED]; the
-viewer uses geometric normals instead.
+order for flat types 10/11 and their 8B tails remain [UNRESOLVED] (flat faces
+use geometric normals in the viewer). Gouraud types 8/9 use the decoded
+stored normals per corner (smooth shading).
 
 **Quad corner order**: records store corners in GPU packet order — the GPU
 draws quads as `(v0,v1,v2)+(v1,v2,v3)`, i.e. the polygon boundary is the
@@ -125,9 +125,13 @@ the record's `rgb+cmd` trailer word (offset 20 for quad types 8/10, offset 16
 for tri types 9/11), usually `80 80 80` = neutral. [VERIFIED — reading it
 from the wrong offset produced purple/red-modulated renders]
 
-Complex models are multi-pose / multi-piece assemblies: parts overlap in
-model space (e.g. EMBTNK00 = hull + turret+gun + two mirrored tread rings +
-hatches). The viewer exposes a per-part selector.
+Complex models are multi-pose / multi-piece assemblies stored UNASSEMBLED:
+parts overlap around the origin in model space (e.g. EMBTNK00 = hull +
+turret+gun + two mirrored hover-skirt rings + hatches). No assembly transform
+exists in the block — the table ends exactly at the last pool byte; the parts
+are posed at runtime by the overlay code / animation data. [VERIFIED: part
+bbox centers equal the raw geometry centers] The viewer exposes a per-part
+selector.
 
 ## Verification renders
 

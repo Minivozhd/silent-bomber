@@ -79,7 +79,10 @@ static int swapYzMode() {
 }
 
 static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
-                             uint32_t vbase, uint32_t vcount, QmdBlock& out) {
+                             uint32_t vbase, uint32_t vcount, QmdBlock& out,
+                             const uint8_t* nrmPool = nullptr,
+                             const uint8_t* f4Pool = nullptr,
+                             uint32_t nrmSlots = 0) {
     while (p + 4 <= size) {
         uint16_t count = rd16(data + p), type = rd16(data + p + 2);
         if (count == 0 && type == 0) break;
@@ -139,6 +142,23 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                 face.uv[2][0] = r[12]; face.uv[2][1] = r[13];
                 face.tpage = rd16(r + 14);
             }
+            // gouraud types 8/9 (complex blocks): 8B tail = per-corner normal
+            // indices x2 into the part's normal pool; normal = (nrm.s16lo,
+            // nrm.s16hi, f4.s16) / 4096 [VERIFIED: avg |dot| with adjacent-face
+            // geometric normals = 0.997 on EMBTNK00 part4]
+            if ((type == 8 || type == 9) && nrmPool && f4Pool) {
+                int nn = (type == 8) ? 4 : 3;
+                face.hasNormals = true;
+                for (int j = 0; j < nn; ++j) {
+                    uint32_t s = vidx(r + rs - 8, j);
+                    if (s >= nrmSlots) { face.hasNormals = false; break; }
+                    float nx = rds16(nrmPool + 4 * s);
+                    float ny = rds16(nrmPool + 4 * s + 2);
+                    float nz = rds16(f4Pool + 2 * s);
+                    float l = std::sqrt(nx * nx + ny * ny + nz * nz);
+                    if (l > 1e-6f) { face.n[j][0] = nx / l; face.n[j][1] = ny / l; face.n[j][2] = nz / l; }
+                }
+            }
             bool ok;
             int co = colorOff(type, 0, ok);
             if (ok) {
@@ -189,9 +209,12 @@ static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
         uint32_t prim = rd32(e) + fix;
         uint32_t xz = rd32(e + 4) + fix;
         uint32_t y = rd32(e + 8) + fix;
+        uint32_t nrm = rd32(e + 12) + fix;
+        uint32_t f4 = rd32(e + 16) + fix;
         uint32_t count = rd32(e + 20);
         size_t vb = baseOff + xz, vc = baseOff + y;
         if (vb + count * 4 > size || vc + count * 2 > size) return;
+        if (baseOff + nrm + count * 4 > size || baseOff + f4 + count * 2 > size) return;
 
         QmdBlock sub;
         sub.name = out.name + " part " + std::to_string(k);
@@ -208,7 +231,8 @@ static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
             v.z = poolY ? p1 : pc;
             sub.verts.push_back(v);
         }
-        parseChunkStream(data, size, baseOff + prim, 0, count, sub);
+        parseChunkStream(data, size, baseOff + prim, 0, count, sub,
+                         data + baseOff + nrm, data + baseOff + f4, count);
         if (onlyPart < 0 || (int)k == onlyPart) {
             // merge into the assembled view
             uint32_t vbase = (uint32_t)out.verts.size();
