@@ -5,8 +5,18 @@ Reference parser: `experiments/qmd_parse.py` (walks, renders, exports OBJ).
 
 ## Container
 
-- `part3` of a package starts with magic `pQES` + header, then a chain of
-  QMD blocks. [VERIFIED]
+- `part3` of a package = `pQES` container: 16-byte header
+  (`"pQES"`, u32 `0x01000000`, u32 `0x710BE001`, u32 `0x000203B0`), then one
+  or two **script sections** (see below), then the QMD block chain.
+  [VERIFIED across P01/P02/P05/A00]
+- Each script section starts with its own `pQES` header (identical words) and
+  ends with terminator `FF 2F 00 00` (padded to 4). P01: sections at
+  0x10..0x478 and 0x488..0x924, QMD chain at 0x924. P02: 0x10..0xBA4,
+  0xBB4..0x1A24. A00 (arena): single section 0x10..0x2A8.
+- The script sections are a compact bytecode/record stream (opcodes like
+  C0..C5 with u16 args in the prologue; a regular `XX 5A ...` body with
+  7/8-byte records). [UNRESOLVED — interpreter not located yet; likely poses
+  model parts / animates scene objects]
 - Unit packs (`grpA_XX.part2_raw.bin`) hold a bare QMD chain (no pQES). [VERIFIED]
 
 ## QMD block
@@ -124,6 +134,13 @@ identity mapping; winding is consistent across the whole closed mesh]
 the record's `rgb+cmd` trailer word (offset 20 for quad types 8/10, offset 16
 for tri types 9/11), usually `80 80 80` = neutral. [VERIFIED — reading it
 from the wrong offset produced purple/red-modulated renders]
+
+Complex part symmetry check (EMBTNK00): every part is mirror-symmetric across
+the z (pool) axis where expected — hull part0 28/28 verts paired, panel part6
+24/24, wedge part3 10/10, turret+gun part2 16/24 (the gun barrel along +x
+legitimately breaks symmetry); parts 4/5 are the left/right hover pods
+(mirror images of each other). EMBTNK01 is the damaged variant: same hull,
+parts 4-6 empty (count=0). [VERIFIED]
 
 Complex models are multi-pose / multi-piece assemblies stored UNASSEMBLED:
 parts overlap around the origin in model space (e.g. EMBTNK00 = hull +
