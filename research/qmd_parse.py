@@ -28,17 +28,17 @@ QMD block:
          stored + 0x24 * part_index. [VERIFIED 2026-10-01 on EMBTNK00]
          +0x00 u32 prim:  per-part face-chunk stream (same layout as simple
                           section A: u16 count + u16 type chunks, (0,0) end)
-         +0x04 u32 xz:    -> count x (s16 x, s16 z) vertex pairs
-         +0x08 u32 y:     -> count x s16 vertex heights
+         +0x04 u32 xy:    -> count x (s16 x, s16 y) vertex pairs
+         +0x08 u32 z:     -> count x s16 vertex depths
          +0x0C u32 nrm:   -> 4B normal slots (per prim for flat types 10/11,
                           per vertex for gouraud types 8/9)
          +0x10 u32 f4:    -> u16 slots, same multiplicity as nrm
          +0x14 u32 count: vertex count of this part
          +0x18 u32 f6:    offset into the prim region (runtime?) [UNRESOLVED]
-         +0x1C 4 x s16: bounding sphere (cx, cz, cy, r) — pool axis order
-  Normals: full normal = (nrm.s16lo, f4.s16, nrm.s16hi) = (nx, nz, ny) in
-  pool axis order (x, z, y), unit length 4096 (12-bit fixed). [VERIFIED:
-  every EMBTNK00 slot is unit-length]
+         +0x1C 4 x s16: bounding sphere (cx, cy, cz, r)
+  Normals: full normal = (nx=nrm.s16lo, ny=nrm.s16hi, nz=f4.s16) in the
+  complex-block world frame (x, y from the pair, z from the pool), unit
+  length 4096 (12-bit fixed). [VERIFIED exactly on EMBTNK00]
   Vertex indices in records are x2 and PART-LOCAL (max = count-1).
   Quad records store corners in GPU packet order: tris (v0,v1,v2)+(v1,v2,v3),
   polygon boundary is the zigzag v0-v1-v3-v2. [VERIFIED: convexity + UV/3D
@@ -203,20 +203,21 @@ class Block:
         return out
 
     def part_vertices(self, part):
-        """complex block part -> [(x, y, z)] (part-local space)."""
+        """complex block part -> [(x, y, z)] (part-local space);
+        pair = (x, y), pool = z [VERIFIED: stored normals + proportions]."""
         n = part['count']
-        return [(s16(self.buf, part['xz']+4*i), s16(self.buf, part['y']+2*i),
-                 s16(self.buf, part['xz']+4*i+2)) for i in range(n)]
+        return [(s16(self.buf, part['xz']+4*i), s16(self.buf, part['xz']+4*i+2),
+                 s16(self.buf, part['y']+2*i)) for i in range(n)]
 
     def part_normals(self, part, nslots):
         """complex block part -> [(nx, ny, nz)] float; normal slots are split:
-        (nx, nz) = s16 pair in the nrm word, ny = s16 in the f4 slot
-        (pool axis order x, z, y), unit length 4096."""
+        (nx, ny) = s16 pair in the nrm word, nz = s16 in the f4 slot,
+        unit length 4096."""
         out = []
         for i in range(nslots):
             nx = s16(self.buf, part['nrm']+4*i)
-            nz = s16(self.buf, part['nrm']+4*i+2)
-            ny = s16(self.buf, part['f4']+2*i)
+            ny = s16(self.buf, part['nrm']+4*i+2)
+            nz = s16(self.buf, part['f4']+2*i)
             l = math.sqrt(nx*nx + ny*ny + nz*nz) or 1
             out.append((nx/l, ny/l, nz/l))
         return out

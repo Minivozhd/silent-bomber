@@ -68,6 +68,16 @@ static const int* quadPerm() {
     return kQuadPerms[p];
 }
 
+// Axis mapping: complex model blocks store (x, y) pairs + z pool
+// (verified via stored normals on EMBTNK00); simple blocks (levels, props)
+// store (x, z) pairs + y pool. SB_SWAPYZ forces the swap for A/B testing:
+// 0 = auto (complex: y from pair; simple: y from pool), 1 = force pool-y,
+// 2 = force pair-y.
+static int swapYzMode() {
+    static int m = [] { const char* s = getenv("SB_SWAPYZ"); return s ? atoi(s) : 0; }();
+    return m;
+}
+
 static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                              uint32_t vbase, uint32_t vcount, QmdBlock& out) {
     while (p + 4 <= size) {
@@ -158,15 +168,15 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
 // Complex block: N parts, each a 0x24 table entry whose offsets are
 // SELF-RELATIVE to the entry's own address (stored + 0x24 * part_index):
 //   +0x00 prim  -> per-part face-chunk stream (same layout as simple blocks)
-//   +0x04 xz    -> count x (s16 x, s16 z) vertex pairs
-//   +0x08 y     -> count x s16 vertex heights
+//   +0x04 xy    -> count x (s16 x, s16 y) vertex pairs
+//   +0x08 z     -> count x s16 vertex depths
 //   +0x0C nrm   -> 4-byte normals: one per PRIM for flat types (10/11),
 //                  one per VERTEX for gouraud types (8/9, indexed x2 from
 //                  the 8-byte record tail)
 //   +0x10 f4    -> u16 array, same per-prim/per-vertex multiplicity as nrm
 //   +0x14 count -> vertex count of this part
 //   +0x18 f6    -> offset into the prim region (runtime use)
-//   +0x1C bbox  -> 4 x s16 bounding sphere (cx, cz, cy, r) in pool order
+//   +0x1C bbox  -> 4 x s16 bounding sphere (cx, cy, cz, r)
 static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
                               uint32_t parts, QmdBlock& out) {
     size_t baseOff = boff + 0x10;
@@ -188,11 +198,14 @@ static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
         sub.offset = boff + eoff - baseOff;
         sub.simple = false;
         sub.vertCount = count;
+        bool poolY = swapYzMode() == 1;  // complex default: y from the pair
         for (uint32_t j = 0; j < count; ++j) {
             QmdVertex v;
             v.x = rds16(data + vb + 4 * j);
-            v.y = rds16(data + vc + 2 * j);
-            v.z = rds16(data + vb + 4 * j + 2);
+            int16_t p1 = rds16(data + vb + 4 * j + 2);
+            int16_t pc = rds16(data + vc + 2 * j);
+            v.y = poolY ? pc : p1;
+            v.z = poolY ? p1 : pc;
             sub.verts.push_back(v);
         }
         parseChunkStream(data, size, baseOff + prim, 0, count, sub);
@@ -221,11 +234,14 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
     size_t vb = baseOff + f1, vc = baseOff + f2;
     if (vb + out.vertCount * 4 > size || vc + out.vertCount * 2 > size) return;
     out.verts.reserve(out.vertCount);
+    bool pairY = swapYzMode() == 2;  // simple default: y from the pool
     for (uint32_t i = 0; i < out.vertCount; ++i) {
         QmdVertex v;
         v.x = rds16(data + vb + 4 * i);
-        v.y = rds16(data + vc + 2 * i);
-        v.z = rds16(data + vb + 4 * i + 2);
+        int16_t p1 = rds16(data + vb + 4 * i + 2);
+        int16_t pc = rds16(data + vc + 2 * i);
+        v.y = pairY ? p1 : pc;
+        v.z = pairY ? pc : p1;
         out.verts.push_back(v);
     }
 

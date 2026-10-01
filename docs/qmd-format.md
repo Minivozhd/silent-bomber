@@ -81,29 +81,38 @@ every fixed-up offset lands exactly on its section boundary]
 +0x00 u32 prim   per-part face-chunk stream (same chunk/record layout as
                  simple blocks: u16 count + u16 type chunks, (0,0) terminator,
                  4-byte aligned; consecutive streams pack back to back)
-+0x04 u32 xz     -> count x (s16 x, s16 z) vertex pairs  [VERIFIED]
-+0x08 u32 y      -> count x s16 vertex heights           [VERIFIED]
++0x04 u32 xy     -> count x (s16 x, s16 y) vertex pairs  [VERIFIED]
++0x08 u32 z      -> count x s16 vertex depths            [VERIFIED]
 +0x0C u32 nrm    -> 4-byte normal slots: one per PRIM for flat types
                     (10/11), one per VERTEX for gouraud types (8/9)
 +0x10 u32 f4     -> u16 slots, same multiplicity as nrm
 +0x14 u32 count  vertex count of this part
 +0x18 u32 f6     offset into the prim region (runtime packet link?) [UNRESOLVED]
-+0x1C 4xs16      bounding sphere (cx, cz, cy, r) — pool axis order!  [VERIFIED]
++0x1C 4xs16      bounding sphere (cx, cy, cz, r)                    [VERIFIED]
 ```
 
-Vertices are part-local: `v[j] = (xz[j].x, y[j], xz[j].z)`, and record vertex
+Vertices are part-local: `v[j] = (xy[j].x, xy[j].y, z[j])`, and record vertex
 indices (stored ×2) are local to the part (max index = count-1 for every part
 of EMBTNK00). [VERIFIED]
 
-**Normals**: the full per-slot normal is a 3D unit vector in 12-bit fixed
-point (length 4096) split across the `nrm` and `f4` slots:
-`n = (nrm.s16lo, f4.s16, nrm.s16hi)` — i.e. `(nx, nz)` in the low/high halves
-of the nrm word and `ny` in f4 — in **pool axis order (x, z, y)**, matching
-the bbox field order. Verified numerically: every EMBTNK00 slot is exactly
-unit-length (|n| = 4096 +/- 1). The per-slot ordering vs. prim order and the
-8B record tails of types 10/11 (per-corner normal indices for gouraud types
-8/9 ARE in the tail as u16 x2) remain [PARTIALLY RESOLVED]; the viewer uses
-geometric normals instead.
+**Axis mapping differs between block families** [VERIFIED]:
+- simple blocks (levels SMP*, props GM*, simple units): `v = (x, y, z)` with
+  `(x, z)` in the pair and `y` in the pool — poolC = height
+- complex blocks (EMBTNK, EM4TNK, CMHANR, ...): `v = (x, pair1, poolC)` —
+  the pair holds `(x, y)` and poolC is `z`. Proven by exact stored-normal
+  matches on EMBTNK00 (see below) and by proportions (the boss-tank hover
+  skirt part4/5 is a flat horizontal ring: 960x819 wide, only 218 tall;
+  EM4TNK00 renders as a flat textured tank)
+
+**Normals** (complex blocks): the full per-slot normal is a 3D unit vector in
+12-bit fixed point (length 4096) split across the `nrm` and `f4` slots:
+`n = (nx = nrm.s16lo, ny = nrm.s16hi, nz = f4.s16)` in the complex-block world
+frame (x, y=pair1, z=poolC). [VERIFIED exactly on EMBTNK00 prims 0-1; every
+slot is unit-length 4096 +/- 1]. The bbox field is likewise `(cx, cy, cz, r)`
+with cy = pair1-pool center, cz = poolC center. The per-slot ordering vs. prim
+order and the 8B record tails of types 10/11 (per-corner normal indices for
+gouraud types 8/9 ARE in the tail as u16 x2) remain [PARTIALLY RESOLVED]; the
+viewer uses geometric normals instead.
 
 **Quad corner order**: records store corners in GPU packet order — the GPU
 draws quads as `(v0,v1,v2)+(v1,v2,v3)`, i.e. the polygon boundary is the
