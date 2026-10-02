@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace sb {
@@ -38,7 +39,23 @@ struct QmdBlock {
     std::vector<QmdFace> faces;      // 3- or 4-vert faces; quads in cyclic
                                      // boundary order (v0,v1,v3,v2 of GPU order)
     std::vector<QmdBlock> parts;     // complex blocks: one entry per part
+    // file-relative byte ranges of structural sections, for hex highlighting
+    std::vector<std::tuple<size_t, size_t, std::string>> regions;
 };
+
+/// Runtime parse options (the model lab edits these live; env vars SB_AXES /
+/// SB_QPERM / SB_TRIPERM / SB_UVFLIP / SB_PART / SB_NONRM set the initial
+/// values for headless runs).
+struct ParseOpts {
+    int axisSrc[3] = {-1, -1, -1};  // -1 = default (simple: a,c,b; complex: a,b,c)
+    int axisSgn[3] = {1, 1, 1};
+    int triPerm = 0;                // index into kTriPerms
+    int quadPerm = 0;               // index into kQuadPerms
+    int uvFlip = 0;                 // bit0 swap u/v, bit1 mirror u, bit2 mirror v
+    int onlyPart = -1;              // complex: render only this part
+    bool storedNormals = true;
+};
+extern ParseOpts g_parseOpts;
 
 /// Walks every QMD block in a part3 buffer and parses simple blocks into
 /// geometry. Complex blocks are listed with simple=false.

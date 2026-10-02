@@ -19,6 +19,11 @@ public:
                   const std::vector<sb::QmdFace>& faces,
                   const sb::TextureBank* tex = nullptr);
     void clear();
+    void setTextures(bool on) { texturesOn = on; render(); }
+    void setWireframe(bool on) { wireOn = on; render(); }
+    // baked: use the stored vertex colors as-is (levels carry baked lighting);
+    // otherwise relight with the lambert approximation
+    void setBaked(bool on) { m_baked = on; render(); }
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -33,6 +38,7 @@ private:
     std::vector<sb::QmdFace> m_faces;
     const sb::TextureBank* m_tex = nullptr;
     QImage m_img;
+    bool texturesOn = true, wireOn = false, m_baked = false;
     float m_yaw = 0.6f, m_pitch = -0.4f, m_zoom = 1.0f;
     void applyEnvCam();  // SB_YAW/SB_PITCH/SB_ZOOM overrides (headless shots)
     QPoint m_lastPos;

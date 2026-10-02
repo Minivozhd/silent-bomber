@@ -2,6 +2,9 @@
 #include <QFile>
 #include "ui/MainWindow.hpp"
 #include "ui/ModelView.hpp"
+#include "ui/LabPanel.hpp"
+#include <QVBoxLayout>
+#include <QTimer>
 #include "formats/QmdModel.hpp"
 
 // Headless verification: sb-viewer --render <part3 file> <block name> <out.png>
@@ -39,6 +42,34 @@ int main(int argc, char** argv) {
     if (argc == 5 && QString(argv[1]) == "--render")
         return renderCli(QString::fromUtf8(argv[2]), QString::fromUtf8(argv[3]),
                          QString::fromUtf8(argv[4]));
+    QStringList argvL; for (int i = 0; i < argc; ++i) argvL << argv[i];
+    if (argvL.contains("--lab")) {
+        // model lab: --lab [part3 file] [block name]
+        const QStringList& args = argvL;
+        int li = args.indexOf("--lab");
+        QString path = li + 1 < args.size() && !args[li + 1].startsWith("--")
+                           ? args[li + 1]
+                           : "experiments/out/A00.part3_raw.bin";
+        QString block = li + 2 < args.size() && !args[li + 2].startsWith("--")
+                            ? args[li + 2]
+                            : "CMFANR00";
+        QWidget w;
+        w.setWindowTitle("SB model lab — " + path);
+        auto* l = new QVBoxLayout(&w);
+        l->setContentsMargins(0, 0, 0, 0);
+        auto* lab = new LabPanel(&w);
+        l->addWidget(lab);
+        w.resize(1400, 900);
+        w.show();
+        lab->loadFile(path, block);
+        if (const char* shot = getenv("SB_SHOT")) {  // test hook: grab & quit
+            QTimer::singleShot(600, &w, [shot, &w]() {
+                w.grab().save(QString::fromUtf8(shot));
+                QApplication::quit();
+            });
+        }
+        return app.exec();
+    }
     MainWindow w;
     w.show();
     return app.exec();

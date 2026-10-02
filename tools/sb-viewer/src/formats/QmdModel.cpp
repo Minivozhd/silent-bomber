@@ -1,5 +1,6 @@
 #include "QmdModel.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -59,31 +60,62 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
 static const int kQuadPerms[][4] = {
     {0, 1, 2, 3}, {3, 2, 0, 1}, {2, 0, 1, 3}, {3, 1, 0, 2}, {2, 3, 1, 0}, {1, 3, 2, 0},
 };
-static const int* quadPerm() {
-    static int p = [] {
-        const char* s = getenv("SB_QPERM");
-        int v = s ? atoi(s) : 0;
-        return (v >= 0 && v < 6) ? v : 0;
-    }();
-    return kQuadPerms[p];
+ParseOpts g_parseOpts;
+
+static bool initParseOpts() {
+    if (const char* e = getenv("SB_QPERM")) g_parseOpts.quadPerm = std::clamp(atoi(e), 0, 5);
+    if (const char* e = getenv("SB_TRIPERM")) g_parseOpts.triPerm = std::clamp(atoi(e), 0, 5);
+    if (const char* e = getenv("SB_UVFLIP")) g_parseOpts.uvFlip = atoi(e);
+    if (const char* e = getenv("SB_PART")) g_parseOpts.onlyPart = atoi(e);
+    if (getenv("SB_NONRM")) g_parseOpts.storedNormals = false;
+    if (const char* e = getenv("SB_AXES")) {
+        // "a,c,b" with optional '-' sign prefix per component
+        int idx = 0;
+        for (size_t i = 0; e[i] && idx < 3; ++i) {
+            int sg = 1;
+            if (e[i] == '-') { sg = -1; ++i; }
+            if (e[i] >= 'a' && e[i] <= 'c') {
+                g_parseOpts.axisSrc[idx] = e[i] - 'a';
+                g_parseOpts.axisSgn[idx] = sg;
+                ++idx;
+            }
+        }
+    }
+    return true;
 }
+static const bool kOptsInit = initParseOpts();
+static const int* quadPerm() { return kQuadPerms[g_parseOpts.quadPerm]; }
 
 // Axis mapping: complex model blocks store (x, y) pairs + z pool
 // (verified via stored normals on EMBTNK00); simple blocks (levels, props)
 // store (x, z) pairs + y pool. SB_SWAPYZ forces the swap for A/B testing:
 // 0 = auto (complex: y from pair; simple: y from pool), 1 = force pool-y,
 // 2 = force pair-y.
-static int swapYzMode() {
-    static int m = [] { const char* s = getenv("SB_SWAPYZ"); return s ? atoi(s) : 0; }();
-    return m;
+// Axis source mapping: SB_AXES="a,c,b" picks the source for x,y,z:
+//   a = pair first half, b = pair second half, c = pool; prefix '-' negates.
+// Defaults: simple blocks "a,c,b" (levels), complex blocks "a,b,c".
+struct Axes { int src[3]; int sgn[3]; };
+static Axes axesEnv(const char* def) {
+    Axes ax;
+    for (int k = 0; k < 3; ++k) {
+        ax.src[k] = (g_parseOpts.axisSrc[k] >= 0) ? g_parseOpts.axisSrc[k] : def[k * 2] - 'a';
+        ax.sgn[k] = g_parseOpts.axisSgn[k];
+    }
+    return ax;
 }
+// SB_TRIPERM: vertex/uv corner permutation for tri records (0..5).
+// SB_UVFLIP: bit0 swap u/v, bit1 mirror u (255-u), bit2 mirror v (255-v).
+static const int kTriPerms[][3] = {{0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}};
+static int triPermMode() { return g_parseOpts.triPerm; }
+static int uvFlipMode() { return g_parseOpts.uvFlip; }
 
 static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                              uint32_t vbase, uint32_t vcount, QmdBlock& out,
                              const uint8_t* nrmPool = nullptr,
                              const uint8_t* f4Pool = nullptr,
                              uint32_t nrmSlots = 0,
-                             bool s8normals = false) {
+                             bool s8normals = false,
+                             const Axes* axes = nullptr) {
     while (p + 4 <= size) {
         uint16_t count = rd16(data + p), type = rd16(data + p + 2);
         if (count == 0 && type == 0) break;
@@ -97,8 +129,9 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
             uint32_t rawIdx[4];
             for (int j = 0; j < n; ++j) rawIdx[j] = vidx(r, j);
             const int* pm = quadPerm();
+            const int* tm = kTriPerms[triPermMode()];
             for (int j = 0; j < n; ++j) {
-                uint32_t vi = rawIdx[n == 4 ? pm[j] : j];
+                uint32_t vi = rawIdx[n == 4 ? pm[j] : tm[j]];
                 if (vi >= vcount) { face.verts.clear(); break; }
                 face.verts.push_back(vbase + vi);
             }
@@ -110,27 +143,41 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
             if (vcOff >= 0) {
                 face.hasVertColors = true;
                 for (int j = 0; j < n; ++j) {
-                    int tj = isQuad ? pm[j] : j;
+                    int tj = isQuad ? pm[j] : tm[j];
                     face.vc[j][0] = r[vcOff + 4 * tj];
                     face.vc[j][1] = r[vcOff + 4 * tj + 1];
                     face.vc[j][2] = r[vcOff + 4 * tj + 2];
                 }
             }
             // stored per-corner normals for the untextured types (s8 x3, normalized)
+            // stored normals are in POOL order (pair.a, pair.b, pool.c);
+            // transform to world with the same axis mapping as the vertices
             if (type == 0 || type == 2) {          // [8B idx][12B: 4x3 normals][...]
                 face.hasNormals = true;
                 for (int j = 0; j < 4; ++j) {
                     int tj = isQuad ? pm[j] : j;
-                    int8_t nx = (int8_t)r[8 + 3 * tj], ny = (int8_t)r[8 + 3 * tj + 1], nz = (int8_t)r[8 + 3 * tj + 2];
-                    float l = std::sqrt((float)(nx * nx + ny * ny + nz * nz));
-                    if (l > 1e-6f) { face.n[j][0] = nx / l; face.n[j][1] = ny / l; face.n[j][2] = nz / l; }
+                    float pn[3] = {(float)(int8_t)r[8 + 3 * tj], (float)(int8_t)r[8 + 3 * tj + 1], (float)(int8_t)r[8 + 3 * tj + 2]};
+                    float l = std::sqrt(pn[0]*pn[0] + pn[1]*pn[1] + pn[2]*pn[2]);
+                    if (l > 1e-6f) {
+                        if (axes) {
+                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[axes->src[k]] * axes->sgn[k] / l;
+                        } else {
+                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[k] / l;
+                        }
+                    }
                 }
             } else if (type == 1 || type == 3) {   // [idx][9B: 3x3 normals(+pad)]
                 face.hasNormals = true;
                 for (int j = 0; j < 3; ++j) {
-                    int8_t nx = (int8_t)r[6 + 3 * j], ny = (int8_t)r[6 + 3 * j + 1], nz = (int8_t)r[6 + 3 * j + 2];
-                    float l = std::sqrt((float)(nx * nx + ny * ny + nz * nz));
-                    if (l > 1e-6f) { face.n[j][0] = nx / l; face.n[j][1] = ny / l; face.n[j][2] = nz / l; }
+                    float pn[3] = {(float)(int8_t)r[6 + 3 * tm[j]], (float)(int8_t)r[6 + 3 * tm[j] + 1], (float)(int8_t)r[6 + 3 * tm[j] + 2]};
+                    float l = std::sqrt(pn[0]*pn[0] + pn[1]*pn[1] + pn[2]*pn[2]);
+                    if (l > 1e-6f) {
+                        if (axes) {
+                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[axes->src[k]] * axes->sgn[k] / l;
+                        } else {
+                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[k] / l;
+                        }
+                    }
                 }
             }
             // UV block for textured types (uv = u8 pairs, cba/tpage = u16)
@@ -148,21 +195,23 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                     face.uv[j][1] = rawUv[pm[j]][1];
                 }
             } else if (type == 9 || type == 11) { // tri: [6B idx][10B uvblk][4B rgb+cmd][8B]
-                face.uv[0][0] = r[6]; face.uv[0][1] = r[7];
-                face.uv[1][0] = r[8]; face.uv[1][1] = r[9];
+                uint8_t rawUv[3][2] = {{r[6], r[7]}, {r[8], r[9]}, {r[12], r[13]}};
                 face.clut = rd16(r + 10);
-                face.uv[2][0] = r[12]; face.uv[2][1] = r[13];
                 face.tpage = rd16(r + 14);
+                for (int j = 0; j < 3; ++j) {
+                    face.uv[j][0] = rawUv[tm[j]][0];
+                    face.uv[j][1] = rawUv[tm[j]][1];
+                }
             }
             // gouraud types 8/9 (complex blocks): 8B tail = per-corner normal
             // indices x2 into the part's normal pool; normal = (nrm.s16lo,
             // nrm.s16hi, f4.s16) / 4096 [VERIFIED: avg |dot| with adjacent-face
             // geometric normals = 0.997 on EMBTNK00 part4]
-            if ((type == 8 || type == 9) && nrmPool) {
+            if ((type == 8 || type == 9) && nrmPool && g_parseOpts.storedNormals) {
                 int nn = (type == 8) ? 4 : 3;
                 face.hasNormals = true;
                 for (int j = 0; j < nn; ++j) {
-                    uint32_t s = vidx(r + rs - 8, j);
+                    uint32_t s = vidx(r + rs - 8, nn == 4 ? pm[j] : tm[j]);
                     if (s >= nrmSlots) { face.hasNormals = false; break; }
                     float nx, ny, nz;
                     if (s8normals) {
@@ -171,14 +220,21 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                         ny = (int8_t)nrmPool[4 * s + 1];
                         nz = (int8_t)nrmPool[4 * s + 2];
                     } else {
-                        // complex blocks: 12-bit fixed (nx=nrm.lo, ny=nrm.hi,
-                        // nz=f4 slot), unit length 4096
+                        // complex blocks: 12-bit fixed, pool order:
+                        // pair.a = nrm.lo, pair.b = nrm.hi, pool.c = f4 slot
                         nx = rds16(nrmPool + 4 * s);
                         ny = rds16(nrmPool + 4 * s + 2);
                         nz = rds16(f4Pool + 2 * s);
                     }
+                    float pn[3] = {nx, ny, nz};
                     float l = std::sqrt(nx * nx + ny * ny + nz * nz);
-                    if (l > 1e-6f) { face.n[j][0] = nx / l; face.n[j][1] = ny / l; face.n[j][2] = nz / l; }
+                    if (l > 1e-6f) {
+                        if (axes) {
+                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[axes->src[k]] * axes->sgn[k] / l;
+                        } else {
+                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[k] / l;
+                        }
+                    }
                 }
             }
             bool ok;
@@ -204,6 +260,15 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                     }
                 }
             }
+            // experimental uv transforms
+            int fl = uvFlipMode();
+            if (fl && face.textured) {
+                for (int j = 0; j < n; ++j) {
+                    if (fl & 1) std::swap(face.uv[j][0], face.uv[j][1]);
+                    if (fl & 2) face.uv[j][0] = 255 - face.uv[j][0];
+                    if (fl & 4) face.uv[j][1] = 255 - face.uv[j][1];
+                }
+            }
             out.faces.push_back(std::move(face));
         }
         p += (size_t)rs * count;
@@ -225,7 +290,8 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
 static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
                               uint32_t parts, QmdBlock& out) {
     size_t baseOff = boff + 0x10;
-    int onlyPart = [] { const char* s = getenv("SB_PART"); return s ? atoi(s) : -1; }();
+    out.regions.emplace_back(boff, boff + 0x10, "header");
+    int onlyPart = g_parseOpts.onlyPart;
     for (uint32_t k = 0; k < parts; ++k) {
         size_t eoff = baseOff + 0x24 * k;
         if (eoff + 0x24 > size) return;
@@ -250,18 +316,21 @@ static void parseComplexBlock(const uint8_t* data, size_t size, size_t boff,
         // (VERIFIED: hull and hover-skirt are both flat this way; normals
         // (nx=nrm.lo, ny=nrm.hi, nz=f4) match geometric at |dot|=0.997).
         // SB_SWAPYZ=1 forces y-from-pool for A/B tests.
-        bool poolY = swapYzMode() == 1;
+        Axes ax = axesEnv("a,b,c");
         for (uint32_t j = 0; j < count; ++j) {
+            int16_t comps[3] = {rds16(data + vb + 4 * j), rds16(data + vb + 4 * j + 2),
+                                rds16(data + vc + 2 * j)};
             QmdVertex v;
-            v.x = rds16(data + vb + 4 * j);
-            int16_t p1 = rds16(data + vb + 4 * j + 2);
-            int16_t pc = rds16(data + vc + 2 * j);
-            v.y = poolY ? pc : p1;
-            v.z = poolY ? p1 : pc;
+            v.x = comps[ax.src[0]] * ax.sgn[0];
+            v.y = comps[ax.src[1]] * ax.sgn[1];
+            v.z = comps[ax.src[2]] * ax.sgn[2];
             sub.verts.push_back(v);
         }
+        out.regions.emplace_back(eoff, eoff + 0x24, "part table " + std::to_string(k));
+        out.regions.emplace_back(baseOff + xz, baseOff + xz + count * 4, "xz pairs p" + std::to_string(k));
+        out.regions.emplace_back(baseOff + y, baseOff + y + count * 2, "y pool p" + std::to_string(k));
         parseChunkStream(data, size, baseOff + prim, 0, count, sub,
-                         data + baseOff + nrm, data + baseOff + f4, count);
+                         data + baseOff + nrm, data + baseOff + f4, count, false, &ax);
         if (onlyPart < 0 || (int)k == onlyPart) {
             // merge into the assembled view
             uint32_t vbase = (uint32_t)out.verts.size();
@@ -289,24 +358,30 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
     size_t vb = baseOff + f1, vc = baseOff + f2;
     if (vb + out.vertCount * 4 > size || vc + out.vertCount * 2 > size) return;
     out.verts.reserve(out.vertCount);
-    bool pairY = swapYzMode() == 2;  // simple default: y from the pool
+    Axes ax = axesEnv("a,c,b");  // simple default: y from the pool
     for (uint32_t i = 0; i < out.vertCount; ++i) {
+        int16_t comps[3] = {rds16(data + vb + 4 * i), rds16(data + vb + 4 * i + 2),
+                            rds16(data + vc + 2 * i)};
         QmdVertex v;
-        v.x = rds16(data + vb + 4 * i);
-        int16_t p1 = rds16(data + vb + 4 * i + 2);
-        int16_t pc = rds16(data + vc + 2 * i);
-        v.y = pairY ? p1 : pc;
-        v.z = pairY ? pc : p1;
+        v.x = comps[ax.src[0]] * ax.sgn[0];
+        v.y = comps[ax.src[1]] * ax.sgn[1];
+        v.z = comps[ax.src[2]] * ax.sgn[2];
         out.verts.push_back(v);
     }
 
     // textured-gouraud blocks carry a per-vertex s8 normal pool between
     // sections D..end, indexed by the record-tail nidx of types 8/9
+    out.regions.emplace_back(boff, boff + 0x10 + 0x28, "header");
+    out.regions.emplace_back(baseOff + f0, baseOff + f1, "face chunks");
+    out.regions.emplace_back(baseOff + f1, baseOff + f2, "xz pairs");
+    out.regions.emplace_back(baseOff + f2, baseOff + f3, "y pool");
+    if (f3 < f4 && baseOff + f4 <= size)
+        out.regions.emplace_back(baseOff + f3, baseOff + f4, "extra/normals");
     bool hasNrmPool = (f3 < f4) && (f4 - f3) == out.vertCount * 4 &&
                       baseOff + f4 <= size;
     parseChunkStream(data, size, baseOff + f0, 0, out.vertCount, out,
                      hasNrmPool ? data + baseOff + f3 : nullptr, nullptr,
-                     out.vertCount, /*s8normals=*/true);
+                     out.vertCount, /*s8normals=*/true, &ax);
 }
 
 std::vector<QmdBlock> parseQmdContainer(const uint8_t* data, size_t size) {

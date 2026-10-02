@@ -1,10 +1,12 @@
 #include "MainWindow.hpp"
 #include "ViewportPanel.hpp"
+#include "LabPanel.hpp"
 
 #include <QFileDialog>
 #include <QMenuBar>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QVBoxLayout>
 
 MainWindow::MainWindow() {
     setWindowTitle("Silent Bomber Viewer");
@@ -14,6 +16,27 @@ MainWindow::MainWindow() {
     connect(openAct, &QAction::triggered, this, &MainWindow::openDirectory);
     QMenu* fileMenu = menuBar()->addMenu("&File");
     fileMenu->addAction(openAct);
+
+    auto* labAct = new QAction("Open model &lab", this);
+    connect(labAct, &QAction::triggered, this, [this]() {
+        QString path;
+        auto items = m_tree->selectedItems();
+        if (!items.isEmpty())
+            path = items.first()->data(0, Qt::UserRole).toString();
+        if (path.isEmpty() || !path.contains(".part3"))
+            path = m_rootDir + "/A00.part3_raw.bin";
+        auto* w = new QWidget();
+        w->setAttribute(Qt::WA_DeleteOnClose);
+        w->setWindowTitle("SB model lab — " + path);
+        auto* l = new QVBoxLayout(w);
+        auto* lab = new LabPanel(w);
+        l->setContentsMargins(0, 0, 0, 0);
+        l->addWidget(lab);
+        w->resize(1400, 900);
+        w->show();
+        lab->loadFile(path, "CMFANR00");
+    });
+    fileMenu->addAction(labAct);
 
     auto* splitter = new QSplitter(this);
     m_tree = new QTreeWidget(splitter);

@@ -127,8 +127,10 @@ void ModelView::render() {
             float d = std::fabs((nx * 0.4f + ny * 0.8f + nz * 0.45f) / ln);
             lam = std::max(0.3f, std::min(1.0f, d * 0.75f + 0.3f));
         }
+        const bool kBaked = m_baked || getenv("SB_BAKED");  // no relight
         // stored per-corner normals (data, rotated into view space)
         float intens[4] = {lam, lam, lam, lam};
+        if (kBaked && f.hasVertColors) { for (int k = 0; k < 4; ++k) intens[k] = 1.0f; }
         if (f.hasNormals) {
             static const float lx = 0.4f / 1.14f, ly = 0.8f / 1.14f, lz = 0.45f / 1.14f;
             for (int j = 0; j < nv; ++j) {
@@ -148,14 +150,14 @@ void ModelView::render() {
         int pxPerWord = bppMode == 0 ? 4 : bppMode == 1 ? 2 : 1;
         int pageX = (f.tpage & 0xF) * 64 * pxPerWord;
         int pageY = ((f.tpage >> 4) & 1) * 256;
-        bool tex = f.textured && m_tex && f.tpage != 0 && !getenv("SB_NOTEX");
+        bool tex = f.textured && m_tex && f.tpage != 0 && texturesOn && !getenv("SB_NOTEX");
 
         // scanline fill of a convex 3/4-gon with linear UV + intensity
         // (matches the PS1 GPU's affine whole-quad mapping)
         float ymin = pts[0][1], ymax = pts[0][1];
         for (const auto& p : pts) { ymin = std::min(ymin, p[1]); ymax = std::max(ymax, p[1]); }
         for (int y = std::max(0, (int)ymin); y <= std::min(H - 1, (int)ymax); ++y) {
-            struct Span { float x0, z0, u0, v0, i0, r0, g0, b0, x1, z1, u1, v1, i1, r1, g1, b1; };
+            struct Span { float x0, z0, u0, v0, i0, r0, g0, b0; };
             std::vector<Span> xs;
             for (int i = 0; i < nv; ++i) {
                 const auto& pa = pts[i];
@@ -171,8 +173,7 @@ void ModelView::render() {
                                   intens[i] + t * (intens[j1] - intens[i]),
                                   f.vc[i][0] + t * (f.vc[j1][0] - f.vc[i][0]),
                                   f.vc[i][1] + t * (f.vc[j1][1] - f.vc[i][1]),
-                                  f.vc[i][2] + t * (f.vc[j1][2] - f.vc[i][2]),
-                                  0, 0, 0, 0, 0, 0, 0, 0});
+                                  f.vc[i][2] + t * (f.vc[j1][2] - f.vc[i][2])});
                 }
             }
             if (xs.size() != 2) continue;
@@ -185,9 +186,9 @@ void ModelView::render() {
                 if (!tex) {
                     // per-corner gouraud colors when present; the game relights
                     // via GTE (light range ~x2), so boost
-                    float cr = f.hasVertColors ? xs[0].r0 + t * (xs[0].r1 - xs[0].r0) : f.r;
-                    float cg = f.hasVertColors ? xs[0].g0 + t * (xs[0].g1 - xs[0].g0) : f.g;
-                    float cb = f.hasVertColors ? xs[0].b0 + t * (xs[0].b1 - xs[0].b0) : f.b;
+                    float cr = f.hasVertColors ? xs[0].r0 + t * (xs[1].r0 - xs[0].r0) : f.r;
+                    float cg = f.hasVertColors ? xs[0].g0 + t * (xs[1].g0 - xs[0].g0) : f.g;
+                    float cb = f.hasVertColors ? xs[0].b0 + t * (xs[1].b0 - xs[0].b0) : f.b;
                     put(x, y, z, qRgb(std::min(255, (int)(cr * I * 1.8f)),
                                       std::min(255, (int)(cg * I * 1.8f)),
                                       std::min(255, (int)(cb * I * 1.8f))));
@@ -205,7 +206,7 @@ void ModelView::render() {
                 }
             }
         }
-        if (getenv("SB_WIRE")) {  // wireframe overlay for geometry debugging
+        if (wireOn || getenv("SB_WIRE")) {  // wireframe overlay for geometry debugging
             for (int i = 0; i < nv; ++i) {
                 const auto& pa = pts[i];
                 const auto& pb = pts[(i + 1) % nv];

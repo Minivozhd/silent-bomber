@@ -158,6 +158,30 @@ are posed at runtime by the overlay code / animation data. [VERIFIED: part
 bbox centers equal the raw geometry centers] The viewer exposes a per-part
 selector.
 
+## Axis conventions (world mapping of the vertex pools)
+
+The vertex pools give two s16 per vertex in the pair array + one s16 in the
+single pool. Naming: `a` = pair 1st half, `b` = pair 2nd half, `c` = pool.
+
+There is NO single global mapping — asset classes were authored in different
+orientations (and skeletal parts are posed at runtime):
+- levels (SMP*): world = (x=a, y=c, z=b) — c = height (26 distinct floor
+  heights with 0 = ground, VERIFIED)
+- complex models (EMBTNK, EM4TNK, CMHANR, ...): world = (x=a, y=b, z=c) —
+  b = height (hull flat, hover-skirt rings flat; VERIFIED vs screenshots)
+- character parts (CMFANR00 girl's face): world = (x=c, y=-b, z=a) — the face
+  is mirror-symmetric across c (lateral), -b = up (eye-band faces at b=-46,
+  mouth at b=-13; TIM7 = the left half-face texture with the eye on top),
+  a = nose-forward. [VERIFIED by texture-region correlation]
+Stored normals are always in POOL order (a, b, c) and must be transformed with
+the same mapping as the vertices. For complex blocks the 12-bit normal slot is
+(nrm.s16lo = a, nrm.s16hi = b, f4.s16 = c). [VERIFIED: dot 0.997]
+
+The viewer defaults: simple blocks "a,c,b", complex "a,b,c". The model lab
+(`sb-viewer --lab [file] [block]`) exposes the axis mapping (source + sign per
+axis), corner orders, UV transforms and shading switches live, with a hex view
+of the block (offset rulers + region highlighting).
+
 ## Verification renders
 
 `experiments/render/`: `SMP01B01.png/.obj` (scene shell, 1148 verts / 1683
