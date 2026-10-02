@@ -73,10 +73,10 @@ const std::map<int, std::string>& defaultRecSpecs() {
         {4, "v0:H v1:H v2:H v3:H c0:I c1:I c2:I c3:I"},
         {5, "v0:H v1:H v2:H c0:I c1:I c2:I x:B x:B x:B x:B x:B x:B"},
         {6, "v0:H v1:H v2:H v3:H x:I x:I x:I rgb:I"},
-        {8, "v0:H v1:H v2:H v3:H u0:B w0:B u1:B w1:B u2:B w2:B cba:H u3:B w3:B tp:H rgb:I n0:H n1:H n2:H n3:H"},
-        {9, "v0:H v1:H v2:H u0:B w0:B u1:B w1:B cba:H u2:B w2:B tp:H rgb:I n0:H n1:H n2:H x:H"},
-        {10, "v0:H v1:H v2:H v3:H u0:B w0:B u1:B w1:B u2:B w2:B cba:H u3:B w3:B tp:H rgb:I n0:H n1:H n2:H n3:H"},
-        {11, "v0:H v1:H v2:H u0:B w0:B u1:B w1:B cba:H u2:B w2:B tp:H rgb:I n0:H n1:H n2:H x:H"},
+        {8, "v0:H v1:H v2:H v3:H u2:B w2:B u3:B w3:B u0:B w0:B cba:H u1:B w1:B tp:H rgb:I n0:H n1:H n2:H n3:H"},
+        {9, "v0:H v1:H v2:H u2:B w2:B u0:B w0:B cba:H u1:B w1:B tp:H rgb:I n0:H n1:H n2:H x:H"},
+        {10, "v0:H v1:H v2:H v3:H u2:B w2:B u3:B w3:B u0:B w0:B cba:H u1:B w1:B tp:H rgb:I n0:H n1:H n2:H n3:H"},
+        {11, "v0:H v1:H v2:H u2:B w2:B u0:B w0:B cba:H u1:B w1:B tp:H rgb:I n0:H n1:H n2:H x:H"},
     };
     return defs;
 }

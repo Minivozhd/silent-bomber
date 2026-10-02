@@ -56,10 +56,10 @@ Vertex indices are stored ×2 (read `u16 >> 1`). Record layouts:
 | 4 | quad, gouraud, no normals | 24B | 4×u16 idx, 4×4B colors (color layout approximate) |
 | 5 | tri, gouraud, no normals | 24B | 3×u16 idx, 3×4B colors (approximate) |
 | 6 | two-quad strip | 28B | 2×(4×u16 idx), 1×4B color (approximate) |
-| 8 | quad, textured gouraud (GT4, cmd 0x3C) | 32B | 4×u16 idx, uv0,uv1,uv2,cba,uv3,tpage (12B), rgb+cmd, 4×u16 nidx×2 [VERIFIED: nidx = per-corner normal indices into the part's normal pool, avg |dot| vs geometric = 0.997] |
-| 9 | tri, textured gouraud (GT3, cmd 0x34) | 28B | 3×u16 idx, uv0,uv1,cba,uv2,tpage (10B), rgb+cmd, 3×u16 nidx×2 + pad [VERIFIED same] |
-| 10 | quad, textured flat (FT4, cmd 0x2C) | 32B | 4×u16 idx, uv0,uv1,uv2,cba,uv3,tpage (12B), rgb+cmd, 8B tail |
-| 11 | tri, textured flat (FT3, cmd 0x24) | 28B | 3×u16 idx, uv0,uv1,cba,uv2,tpage (10B), rgb+cmd, 8B tail |
+| 8 | quad, textured gouraud (GT4, cmd 0x3C) | 32B | 4×u16 idx, uv2,uv3, uv0,cba, uv1,tpage (12B), rgb+cmd, 4×u16 nidx×2 [VERIFIED] |
+| 9 | tri, textured gouraud (GT3, cmd 0x34) | 28B | 3×u16 idx, uv2, uv0,cba, uv1,tpage (10B), rgb+cmd, 3×u16 nidx×2 + pad [VERIFIED] |
+| 10 | quad, textured flat (FT4, cmd 0x2C) | 32B | 4×u16 idx, uv2,uv3, uv0,cba, uv1,tpage (12B), rgb+cmd, 8B tail |
+| 11 | tri, textured flat (FT3, cmd 0x24) | 28B | 3×u16 idx, uv2, uv0,cba, uv1,tpage (10B), rgb+cmd, 8B tail |
 
 Sizes VERIFIED by chunk-landing analysis (records must land on the next chunk
 header / terminator / section end) across P01, A00, P02 and unit packs — zero
@@ -70,10 +70,16 @@ clut (320,320), tpage 0x001C), grpA_00 unit → cba 0x3E37 = clut (880,248),
 tpage 0x000D = image (832,0). UV order is `[uv0][uv1][uv2][cba][uv3][tpage]`
 for quads and `[uv0][uv1][cba][uv2][tpage]` for tris [VERIFIED by TIM rect
 match]. The single modulation color is the `rgb+cmd` trailer word (offset 20
-in quad records 8/10, offset 16 in tri records 9/11) [VERIFIED]. Normal
-indices in the 8B tails of types 8/9 (u16 x2, per corner) are confirmed small
-and in-range; what they index in simple blocks is [UNRESOLVED] (complex blocks
-have explicit per-part normal pools, see below). Type 10/11 8B tails
+in quad records 8/10, offset 16 in tri records 9/11) [VERIFIED].
+
+**UV order in the block is rotated vs. the vertex order** [VERIFIED 2026-10-02
+via connected-vertex UV consistency (14/45 vs 44/45 mismatched verts on
+CMFANR00) + visual proof: the girl's face renders perfectly]: stored =
+`uv2 uv3 uv0 uv1` for quads, `uv2 uv0 uv1` for tris. Rationale: the game copies
+the last two words `uv0+cba`, `uv1+tpage` verbatim into the GPU packet (that's
+exactly the PS1 GT/FT packet word layout), the remaining uvs precede them.
+Normal indices in the 8B tails of types 8/9 (u16 x2, per corner) are confirmed
+per-corner indices into the part's normal pool (dot 0.997). Type 10/11 8B tails
 [UNRESOLVED].
 
 **Extra section (f3..f4)** — present when f3 < f4 [VERIFIED]:
