@@ -177,10 +177,26 @@ Stored normals are always in POOL order (a, b, c) and must be transformed with
 the same mapping as the vertices. For complex blocks the 12-bit normal slot is
 (nrm.s16lo = a, nrm.s16hi = b, f4.s16 = c). [VERIFIED: dot 0.997]
 
-The viewer defaults: simple blocks "a,c,b", complex "a,b,c". The model lab
-(`sb-viewer --lab [file] [block]`) exposes the axis mapping (source + sign per
-axis), corner orders, UV transforms and shading switches live, with a hex view
-of the block (offset rulers + region highlighting).
+The viewer defaults: simple blocks "a,c,b", complex "a,b,c".
+
+### Model lab
+
+`sb-viewer --lab [part3 file] [block]` (or File > Open model lab) opens an
+interactive format workbench: live axis mapping (source + sign per axis),
+quad/tri corner orders, UV swap/mirror, index shift, stored-normals toggle,
+textures/wireframe/normals/baked-colors render switches, plus:
+
+- a hex view of the block with offset rulers and region highlighting;
+- a UV-space view (the texture page with the faces' UV polygons overlaid,
+  click selects a face);
+- a record inspector: record N -> decoded field table + its bytes highlighted
+  in the hex view;
+- a struct-style record-format editor per record type: fields are
+  `role:type` with B/b/H/h/I/i (u8/s8/u16/s16/u32/s32, '>' for big-endian).
+  Roles: v0..v3 (vertex indices, stored x2), uK/wK (uv), cba, tp, rgb (flat
+  color word), c0..c3 (per-corner colors), n0..n3 (u16 normal-pool indices),
+  nKa/nKb/nKc (inline s8 normal triplets), x (padding). Default specs are the
+  verified layouts from this document; custom specs reparse live.
 
 ## Verification renders
 

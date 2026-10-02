@@ -1,5 +1,7 @@
 #include "QmdModel.hpp"
 
+#include "RecSpec.hpp"
+
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -31,21 +33,6 @@ static int recSize(int type) {
 // Vertex index read: stored x2.
 static inline uint32_t vidx(const uint8_t* r, int j) { return rd16(r + 2 * j) >> 1; }
 
-// First-corner / per-corner color offset per type (colors are 4B RGBA quads).
-static int colorOff(int type, int corner, bool& ok) {
-    ok = true;
-    switch (type) {
-        case 0: return 20 + 4 * corner;           // 4 colors
-        case 1: return 16 + 4 * corner;           // 3 colors
-        case 4: return 8 + 4 * corner;            // 4 colors, no normals
-        case 5: return 6 + 4 * corner;            // 3 colors, no normals
-        case 2: case 10: return 20;               // 1 color (trailer rgb+cmd)
-        case 3: case 9: case 11: return 16;       // 1 color (trailer rgb+cmd)
-        case 6: return 24;                        // 1 color
-        case 8: return 20;                        // 1 color (trailer rgb+cmd)
-        default: ok = false; return 0;
-    }
-}
 
 static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdBlock& out);
 
@@ -116,132 +103,137 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                              uint32_t nrmSlots = 0,
                              bool s8normals = false,
                              const Axes* axes = nullptr) {
+    const int* pm = quadPerm();
+    const int* tm = kTriPerms[triPermMode()];
     while (p + 4 <= size) {
         uint16_t count = rd16(data + p), type = rd16(data + p + 2);
         if (count == 0 && type == 0) break;
-        int rs = recSize(type);
+        // record layout: custom spec > defaults; size: override > spec > table
+        RecSpec spec;
+        bool custom = false;
+        auto sit = g_parseOpts.recSpecs.find(type);
+        if (sit != g_parseOpts.recSpecs.end()) {
+            spec = parseRecSpec(sit->second);
+            custom = true;
+        } else {
+            auto dit = defaultRecSpecs().find(type);
+            if (dit != defaultRecSpecs().end()) spec = parseRecSpec(dit->second);
+        }
+        int rs = spec.valid ? spec.size : recSize(type);
+        auto oit = g_parseOpts.recSizeOverride.find(type);
+        if (oit != g_parseOpts.recSizeOverride.end() && oit->second > 0)
+            rs = oit->second;
         if (rs == 0 || p + 4 + (size_t)rs * count > size) break;
         p += 4;
         for (uint16_t i = 0; i < count; ++i) {
             const uint8_t* r = data + p + (size_t)rs * i;
             QmdFace face;
-            int n = (type == 1 || type == 3 || type == 5 || type == 9 || type == 11) ? 3 : 4;
-            uint32_t rawIdx[4];
-            for (int j = 0; j < n; ++j) rawIdx[j] = vidx(r, j);
-            const int* pm = quadPerm();
-            const int* tm = kTriPerms[triPermMode()];
+            face.recOff = p + (size_t)rs * i;
+            face.recType = type;
+            if (!spec.valid) continue;
+
+            RecValues rv = decodeRecord(spec, r);
+            // corners: v0..v3 roles; count of v roles decides tri/quad
+            int n = 0;
+            uint32_t rawIdx[4] = {0, 0, 0, 0};
+            for (int j = 0; j < 4; ++j) {
+                auto it = rv.v.find("v" + std::to_string(j));
+                if (it == rv.v.end()) break;
+                rawIdx[j] = it->second >> g_parseOpts.idxShift;
+                ++n;
+            }
+            bool isQuad = (n == 4);
             for (int j = 0; j < n; ++j) {
-                uint32_t vi = rawIdx[n == 4 ? pm[j] : tm[j]];
+                uint32_t vi = rawIdx[isQuad ? pm[j] : tm[j]];
                 if (vi >= vcount) { face.verts.clear(); break; }
                 face.verts.push_back(vbase + vi);
             }
             if (face.verts.empty()) continue;
-            face.textured = (type >= 8);
-            bool isQuad = (n == 4);
-            // per-corner gouraud colors for the untextured types
-            int vcOff = (type == 0) ? 20 : (type == 1) ? 16 : (type == 4) ? 8 : (type == 5) ? 6 : -1;
-            if (vcOff >= 0) {
+
+            // UVs / texture words
+            auto getu = [&](const char* role, uint32_t& dst) -> bool {
+                auto it = rv.v.find(role);
+                if (it == rv.v.end()) return false;
+                dst = it->second;
+                return true;
+            };
+            uint32_t dummy;
+            face.textured = getu("cba", dummy);
+            for (int j = 0; j < n; ++j) {
+                int tj = isQuad ? pm[j] : tm[j];
+                std::string ur = "u" + std::to_string(tj), wr = "w" + std::to_string(tj);
+                auto ui = rv.v.find(ur), wi = rv.v.find(wr);
+                if (ui != rv.v.end()) face.uv[j][0] = ui->second & 0xFF;
+                if (wi != rv.v.end()) face.uv[j][1] = wi->second & 0xFF;
+            }
+            getu("cba", dummy); face.clut = rv.v.count("cba") ? rv.v.at("cba") & 0xFFFF : 0;
+            face.tpage = rv.v.count("tp") ? rv.v.at("tp") & 0xFFFF : 0;
+
+            // colors: flat trailer word or per-corner roles
+            if (rv.v.count("rgb")) {
+                uint32_t c = rv.v.at("rgb");
+                face.r = c & 0xFF; face.g = (c >> 8) & 0xFF; face.b = (c >> 16) & 0xFF;
+            }
+            if (rv.v.count("c0")) {
                 face.hasVertColors = true;
                 for (int j = 0; j < n; ++j) {
                     int tj = isQuad ? pm[j] : tm[j];
-                    face.vc[j][0] = r[vcOff + 4 * tj];
-                    face.vc[j][1] = r[vcOff + 4 * tj + 1];
-                    face.vc[j][2] = r[vcOff + 4 * tj + 2];
+                    auto it = rv.v.find("c" + std::to_string(tj));
+                    if (it == rv.v.end()) { face.hasVertColors = false; break; }
+                    face.vc[j][0] = it->second & 0xFF;
+                    face.vc[j][1] = (it->second >> 8) & 0xFF;
+                    face.vc[j][2] = (it->second >> 16) & 0xFF;
                 }
             }
-            // stored per-corner normals for the untextured types (s8 x3, normalized)
-            // stored normals are in POOL order (pair.a, pair.b, pool.c);
-            // transform to world with the same axis mapping as the vertices
-            if (type == 0 || type == 2) {          // [8B idx][12B: 4x3 normals][...]
+
+            // normals: inline s8 triplets (nKa/nKb/nKc roles) or u16 pool
+            // indices (n0..n3) — pool lookup only for gouraud types 8/9 with
+            // default specs; custom specs are honored as written
+            bool poolNrm = nrmPool && g_parseOpts.storedNormals &&
+                           (custom || type == 8 || type == 9) && rv.v.count("n0");
+            if (poolNrm) {
                 face.hasNormals = true;
-                for (int j = 0; j < 4; ++j) {
-                    int tj = isQuad ? pm[j] : j;
-                    float pn[3] = {(float)(int8_t)r[8 + 3 * tj], (float)(int8_t)r[8 + 3 * tj + 1], (float)(int8_t)r[8 + 3 * tj + 2]};
-                    float l = std::sqrt(pn[0]*pn[0] + pn[1]*pn[1] + pn[2]*pn[2]);
-                    if (l > 1e-6f) {
-                        if (axes) {
-                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[axes->src[k]] * axes->sgn[k] / l;
-                        } else {
-                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[k] / l;
-                        }
-                    }
-                }
-            } else if (type == 1 || type == 3) {   // [idx][9B: 3x3 normals(+pad)]
-                face.hasNormals = true;
-                for (int j = 0; j < 3; ++j) {
-                    float pn[3] = {(float)(int8_t)r[6 + 3 * tm[j]], (float)(int8_t)r[6 + 3 * tm[j] + 1], (float)(int8_t)r[6 + 3 * tm[j] + 2]};
-                    float l = std::sqrt(pn[0]*pn[0] + pn[1]*pn[1] + pn[2]*pn[2]);
-                    if (l > 1e-6f) {
-                        if (axes) {
-                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[axes->src[k]] * axes->sgn[k] / l;
-                        } else {
-                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[k] / l;
-                        }
-                    }
-                }
-            }
-            // UV block for textured types (uv = u8 pairs, cba/tpage = u16)
-            if (type == 8 || type == 10) {       // quad: [8B idx][12B uvblk][4B rgb+cmd][8B nidx]
-                uint8_t rawUv[4][2];
-                for (int j = 0; j < 3; ++j) {
-                    rawUv[j][0] = r[8 + 2 * j];
-                    rawUv[j][1] = r[8 + 2 * j + 1];
-                }
-                face.clut = rd16(r + 14);
-                rawUv[3][0] = r[16]; rawUv[3][1] = r[17];
-                face.tpage = rd16(r + 18);
-                for (int j = 0; j < 4; ++j) {
-                    face.uv[j][0] = rawUv[pm[j]][0];
-                    face.uv[j][1] = rawUv[pm[j]][1];
-                }
-            } else if (type == 9 || type == 11) { // tri: [6B idx][10B uvblk][4B rgb+cmd][8B]
-                uint8_t rawUv[3][2] = {{r[6], r[7]}, {r[8], r[9]}, {r[12], r[13]}};
-                face.clut = rd16(r + 10);
-                face.tpage = rd16(r + 14);
-                for (int j = 0; j < 3; ++j) {
-                    face.uv[j][0] = rawUv[tm[j]][0];
-                    face.uv[j][1] = rawUv[tm[j]][1];
-                }
-            }
-            // gouraud types 8/9 (complex blocks): 8B tail = per-corner normal
-            // indices x2 into the part's normal pool; normal = (nrm.s16lo,
-            // nrm.s16hi, f4.s16) / 4096 [VERIFIED: avg |dot| with adjacent-face
-            // geometric normals = 0.997 on EMBTNK00 part4]
-            if ((type == 8 || type == 9) && nrmPool && g_parseOpts.storedNormals) {
-                int nn = (type == 8) ? 4 : 3;
-                face.hasNormals = true;
-                for (int j = 0; j < nn; ++j) {
-                    uint32_t s = vidx(r + rs - 8, nn == 4 ? pm[j] : tm[j]);
-                    if (s >= nrmSlots) { face.hasNormals = false; break; }
+                for (int j = 0; j < n; ++j) {
+                    int tj = isQuad ? pm[j] : tm[j];
+                    uint32_t sidx = rv.v.at("n" + std::to_string(tj)) >> g_parseOpts.idxShift;
+                    if (sidx >= nrmSlots) { face.hasNormals = false; break; }
                     float nx, ny, nz;
                     if (s8normals) {
-                        // simple blocks: 4B per vertex = s8 nx,ny,nz + pad
-                        nx = (int8_t)nrmPool[4 * s];
-                        ny = (int8_t)nrmPool[4 * s + 1];
-                        nz = (int8_t)nrmPool[4 * s + 2];
+                        nx = (int8_t)nrmPool[4 * sidx];
+                        ny = (int8_t)nrmPool[4 * sidx + 1];
+                        nz = (int8_t)nrmPool[4 * sidx + 2];
                     } else {
-                        // complex blocks: 12-bit fixed, pool order:
-                        // pair.a = nrm.lo, pair.b = nrm.hi, pool.c = f4 slot
-                        nx = rds16(nrmPool + 4 * s);
-                        ny = rds16(nrmPool + 4 * s + 2);
-                        nz = rds16(f4Pool + 2 * s);
+                        nx = rds16(nrmPool + 4 * sidx);
+                        ny = rds16(nrmPool + 4 * sidx + 2);
+                        nz = rds16(f4Pool + 2 * sidx);
                     }
                     float pn[3] = {nx, ny, nz};
                     float l = std::sqrt(nx * nx + ny * ny + nz * nz);
                     if (l > 1e-6f) {
-                        if (axes) {
+                        if (axes)
                             for (int k = 0; k < 3; ++k) face.n[j][k] = pn[axes->src[k]] * axes->sgn[k] / l;
-                        } else {
+                        else
                             for (int k = 0; k < 3; ++k) face.n[j][k] = pn[k] / l;
-                        }
+                    }
+                }
+            } else if (rv.v.count("n0a")) {
+                face.hasNormals = true;
+                for (int j = 0; j < n; ++j) {
+                    int tj = isQuad ? pm[j] : tm[j];
+                    std::string nb = "n" + std::to_string(tj);
+                    float pn[3] = {(float)(int8_t)(rv.v.at(nb + "a") & 0xFF),
+                                   (float)(int8_t)(rv.v.at(nb + "b") & 0xFF),
+                                   (float)(int8_t)(rv.v.at(nb + "c") & 0xFF)};
+                    float l = std::sqrt(pn[0]*pn[0] + pn[1]*pn[1] + pn[2]*pn[2]);
+                    if (l > 1e-6f) {
+                        if (axes)
+                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[axes->src[k]] * axes->sgn[k] / l;
+                        else
+                            for (int k = 0; k < 3; ++k) face.n[j][k] = pn[k] / l;
                     }
                 }
             }
-            bool ok;
-            int co = colorOff(type, 0, ok);
-            if (ok) {
-                face.r = r[co]; face.g = r[co + 1]; face.b = r[co + 2];
-            }
+
             // Quads: records are in GPU packet order (tris (v0,v1,v2)+(v1,v2,v3)),
             // so the polygon boundary is the zigzag v0-v1-v3-v2. Reorder to the
             // cyclic boundary and keep quads as single 4-vert faces — the PS1

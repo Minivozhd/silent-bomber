@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
         int li = args.indexOf("--lab");
         QString path = li + 1 < args.size() && !args[li + 1].startsWith("--")
                            ? args[li + 1]
-                           : "experiments/out/A00.part3_raw.bin";
+                           : "/Users/alexeykrasnopolsky/Desktop/silent_bomber/experiments/out/A00.part3_raw.bin";
         QString block = li + 2 < args.size() && !args[li + 2].startsWith("--")
                             ? args[li + 2]
                             : "CMFANR00";

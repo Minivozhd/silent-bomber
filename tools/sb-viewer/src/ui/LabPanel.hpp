@@ -9,8 +9,12 @@
 class QComboBox;
 class QCheckBox;
 class QLabel;
+class QLineEdit;
+class QSpinBox;
+class QTableWidget;
 class ModelView;
 class HexWidget;
+class UvView;
 
 /// Interactive model-format lab: a QMD block viewer with live parsing
 /// parameters (axis mapping, corner orders, UV transforms, normals) and a
@@ -25,6 +29,8 @@ public:
 private:
     void reparse();
     void updateBlockView();
+    void showRecord();
+    void loadSpecEditor();
 
     QString m_path;
     std::vector<uint8_t> m_bytes;
@@ -48,4 +54,13 @@ private:
     QCheckBox* m_textures = nullptr;
     QCheckBox* m_wire = nullptr;
     QCheckBox* m_baked = nullptr;
+    QCheckBox* m_normals = nullptr;
+    QSpinBox* m_idxShift = nullptr;
+    UvView* m_uv = nullptr;
+    QComboBox* m_recType = nullptr;
+    QLineEdit* m_specEdit = nullptr;
+    QLabel* m_specInfo = nullptr;
+    QSpinBox* m_recSizeOv = nullptr;
+    QSpinBox* m_recSpin = nullptr;
+    QTableWidget* m_recTable = nullptr;
 };

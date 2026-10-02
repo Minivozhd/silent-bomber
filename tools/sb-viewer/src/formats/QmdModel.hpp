@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -20,6 +21,8 @@ struct QmdVertex { float x, y, z; };
 
 struct QmdFace {
     std::vector<uint32_t> verts;     // 3 or 4 vertex indices
+    size_t recOff = 0;               // file offset of the source record
+    int recType = -1;                // record type
     uint8_t r = 200, g = 170, b = 90; // flat / first corner color
     bool textured = false;
     uint8_t uv[4][2] = {};           // per-corner texel coords
@@ -54,6 +57,9 @@ struct ParseOpts {
     int uvFlip = 0;                 // bit0 swap u/v, bit1 mirror u, bit2 mirror v
     int onlyPart = -1;              // complex: render only this part
     bool storedNormals = true;
+    int idxShift = 1;               // vertex/normal index downshift (stored x2)
+    std::map<int, std::string> recSpecs;   // custom record layouts by type
+    std::map<int, int> recSizeOverride;    // record size overrides by type
 };
 extern ParseOpts g_parseOpts;
 

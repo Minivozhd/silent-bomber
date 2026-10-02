@@ -104,7 +104,9 @@ void ModelView::render() {
         }
     };
 
+    int faceIdx = -1;
     for (const auto& f : m_faces) {
+        ++faceIdx;
         if (f.verts.size() < 3) continue;
         const int nv = (int)f.verts.size();  // 3 or 4 (quads = single convex polygon)
         std::vector<std::array<float,3>> pts(nv);
@@ -206,6 +208,22 @@ void ModelView::render() {
                 }
             }
         }
+        if (faceIdx == m_selFace) {
+            // highlight the selected face
+            for (int i = 0; i < nv; ++i) {
+                const auto& pa = pts[i];
+                const auto& pb = pts[(i + 1) % nv];
+                float len = std::max(std::fabs(pb[0] - pa[0]), std::fabs(pb[1] - pa[1]));
+                for (int st = 0; st <= (int)len; ++st) {
+                    float t = len > 0 ? st / len : 0;
+                    int x = (int)(pa[0] + t * (pb[0] - pa[0]));
+                    int y = (int)(pa[1] + t * (pb[1] - pa[1]));
+                    float z = pa[2] + t * (pb[2] - pa[2]);
+                    put(x, y, z + 1e-2f, qRgb(255, 60, 60));
+                    put(x + 1, y, z + 1e-2f, qRgb(255, 60, 60));
+                }
+            }
+        }
         if (wireOn || getenv("SB_WIRE")) {  // wireframe overlay for geometry debugging
             for (int i = 0; i < nv; ++i) {
                 const auto& pa = pts[i];
@@ -218,6 +236,63 @@ void ModelView::render() {
                     float z = pa[2] + t * (pb[2] - pa[2]);
                     put(x, y, z + 1e-3f, qRgb(0, 0, 0));
                 }
+            }
+        }
+    }
+    if (normalsOn || getenv("SB_NORMALS")) {
+        // normals as lines: yellow = stored per-corner, green = geometric at
+        // the face center. Screen-space length is constant (nPix).
+        const float nPix = 0.10f * std::min(W, H);
+        auto xform = [&](float nx, float ny, float nz) {
+            float x1 = nx * ca + nz * sa;
+            float z1 = -nx * sa + nz * ca;
+            float y2 = ny * cp - z1 * sp;
+            float z2 = ny * sp + z1 * cp;
+            return std::array<float,3>{x1, y2, z2};
+        };
+        // normals draw on top (no z-test) — it's a debug overlay
+        auto putTop = [&](int x, int y, QRgb col) {
+            if (x < 0 || y < 0 || x >= W || y >= H) return;
+            img[(size_t)y * W + x] = col;
+        };
+        auto line = [&](std::array<float,3> a, float dx, float dy, float dz, QRgb col) {
+            std::array<float,3> b = {a[0] + dx, a[1] + dy, a[2] + dz};
+            float len = std::max(std::fabs(b[0] - a[0]), std::fabs(b[1] - a[1]));
+            for (int st = 0; st <= (int)len; ++st) {
+                float t = len > 0 ? st / len : 0;
+                putTop((int)(a[0] + t * (b[0] - a[0])), (int)(a[1] + t * (b[1] - a[1])), col);
+            }
+            putTop((int)a[0], (int)a[1], qRgb(255, 255, 255));
+        };
+        for (const auto& f : m_faces) {
+            if (f.verts.size() < 3) continue;
+            int nv = (int)f.verts.size();
+            std::array<float,3> cen = {0, 0, 0};
+            for (uint32_t vi : f.verts) {
+                cen[0] += pv[vi][0]; cen[1] += pv[vi][1]; cen[2] += pv[vi][2];
+            }
+            cen[0] /= nv; cen[1] /= nv; cen[2] /= nv;
+            std::array<float,3> c0 = {(cen[0] - cx) * scale + W / 2.0f,
+                                      -(cen[1] - cy) * scale + H / 2.0f, cen[2]};
+            if (f.hasNormals) {
+                for (int j = 0; j < nv; ++j) {
+                    auto nn = xform(f.n[j][0], f.n[j][1], f.n[j][2]);
+                    const auto& vv = pv[f.verts[j]];
+                    std::array<float,3> p0 = {(vv[0] - cx) * scale + W / 2.0f,
+                                              -(vv[1] - cy) * scale + H / 2.0f, vv[2]};
+                    line(p0, nn[0] * nPix, -nn[1] * nPix, nn[2] * nPix * 0.3f, qRgb(230, 220, 60));
+                }
+            }
+            const auto& va = m_verts[f.verts[0]];
+            const auto& vb = m_verts[f.verts[1]];
+            const auto& vc = m_verts[f.verts[2]];
+            float ux = vb.x - va.x, uy = vb.y - va.y, uz = vb.z - va.z;
+            float vx2 = vc.x - va.x, vy2 = vc.y - va.y, vz2 = vc.z - va.z;
+            float nx = uy * vz2 - uz * vy2, ny = uz * vx2 - ux * vz2, nz = ux * vy2 - uy * vx2;
+            float l = std::sqrt(nx * nx + ny * ny + nz * nz);
+            if (l > 1e-6f) {
+                auto nn = xform(nx / l, ny / l, nz / l);
+                line(c0, nn[0] * nPix, -nn[1] * nPix, nn[2] * nPix * 0.3f, qRgb(60, 230, 60));
             }
         }
     }

@@ -12,6 +12,7 @@ public:
     void setData(const uint8_t* data, size_t size);
     void setRegions(std::vector<std::tuple<size_t, size_t, QString>> regions);
     void setBase(size_t off);  // first displayed offset
+    void setSelection(size_t off, size_t len);  // record highlight
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -22,5 +23,6 @@ private:
     size_t m_size = 0;
     size_t m_base = 0;
     std::vector<std::tuple<size_t, size_t, QString>> m_regions;
+    size_t m_selOff = 0, m_selLen = 0;
     int m_charW = 8, m_charH = 14;
 };

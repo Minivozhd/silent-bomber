@@ -29,6 +29,13 @@ void HexWidget::setBase(size_t off) {
     update();
 }
 
+void HexWidget::setSelection(size_t off, size_t len) {
+    m_selOff = off;
+    m_selLen = len;
+    if (len) setBase(off > 32 ? off - 32 : 0);
+    update();
+}
+
 void HexWidget::wheelEvent(QWheelEvent* e) {
     int rows = (height() - (m_charH + 2)) / m_charH;
     int64_t nb = (int64_t)m_base + (int64_t)e->angleDelta().y() / 120 * -16 * 3;
@@ -84,6 +91,8 @@ void HexWidget::paintEvent(QPaintEvent*) {
                 }
                 ++ri;
             }
+            if (m_selLen && off >= m_selOff && off < m_selOff + m_selLen)
+                p.fillRect(offW + c * (m_charW * 3), y, m_charW * 3, m_charH, QColor(160, 60, 60));
             p.setPen(QColor(220, 220, 225));
             uint8_t b = m_data[off];
             QString s;
