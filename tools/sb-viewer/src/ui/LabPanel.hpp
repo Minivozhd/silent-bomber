@@ -55,6 +55,9 @@ private:
     QCheckBox* m_wire = nullptr;
     QCheckBox* m_baked = nullptr;
     QCheckBox* m_normals = nullptr;
+    QCheckBox* m_simpleStoredNormals = nullptr;
+    QComboBox* m_nrmPerm = nullptr;
+    QCheckBox* m_nrmSgn[3] = {nullptr, nullptr, nullptr};
     QSpinBox* m_idxShift = nullptr;
     UvView* m_uv = nullptr;
     QComboBox* m_recType = nullptr;

@@ -97,6 +97,14 @@ static Axes axesEnv(const char* def) {
 // SB_UVFLIP: bit0 swap u/v, bit1 mirror u (255-u), bit2 mirror v (255-v).
 static const int kTriPerms[][3] = {{0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}};
 static int triPermMode() { return g_parseOpts.triPerm; }
+// pool-normal component remap presets (before axis transform)
+static const int kNrmPerms[][3] = {
+    {0,1,2}, {0,2,1}, {1,0,2}, {1,2,0}, {2,0,1}, {2,1,0},
+};
+static void mapNormal(const float raw[3], float out[3]) {
+    const int* mp = kNrmPerms[g_parseOpts.nrmPerm];
+    for (int k = 0; k < 3; ++k) out[k] = raw[mp[k]] * g_parseOpts.nrmSgn[k];
+}
 static int uvFlipMode() { return g_parseOpts.uvFlip; }
 
 static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
@@ -210,8 +218,9 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                         ny = rds16(nrmPool + 4 * sidx + 2);
                         nz = rds16(f4Pool + 2 * sidx);
                     }
-                    float pn[3] = {nx, ny, nz};
-                    float l = std::sqrt(nx * nx + ny * ny + nz * nz);
+                    float raw3[3] = {nx, ny, nz}, pn[3];
+                    mapNormal(raw3, pn);
+                    float l = std::sqrt(pn[0]*pn[0] + pn[1]*pn[1] + pn[2]*pn[2]);
                     if (l > 1e-6f) {
                         if (axes)
                             for (int k = 0; k < 3; ++k) face.n[j][k] = pn[axes->src[k]] * axes->sgn[k] / l;
@@ -224,9 +233,10 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                 for (int j = 0; j < n; ++j) {
                     int tj = isQuad ? pm[j] : tm[j];
                     std::string nb = "n" + std::to_string(tj);
-                    float pn[3] = {(float)(int8_t)(rv.v.at(nb + "a") & 0xFF),
-                                   (float)(int8_t)(rv.v.at(nb + "b") & 0xFF),
-                                   (float)(int8_t)(rv.v.at(nb + "c") & 0xFF)};
+                    float raw3[3] = {(float)(int8_t)(rv.v.at(nb + "a") & 0xFF),
+                                     (float)(int8_t)(rv.v.at(nb + "b") & 0xFF),
+                                     (float)(int8_t)(rv.v.at(nb + "c") & 0xFF)}, pn[3];
+                    mapNormal(raw3, pn);
                     float l = std::sqrt(pn[0]*pn[0] + pn[1]*pn[1] + pn[2]*pn[2]);
                     if (l > 1e-6f) {
                         if (axes)
@@ -372,7 +382,8 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
     out.regions.emplace_back(baseOff + f2, baseOff + f3, "y pool");
     if (f3 < f4 && baseOff + f4 <= size)
         out.regions.emplace_back(baseOff + f3, baseOff + f4, "extra/normals");
-    bool hasNrmPool = (f3 < f4) && (f4 - f3) == out.vertCount * 4 &&
+    bool hasNrmPool = g_parseOpts.simpleStoredNormals &&
+                      (f3 < f4) && (f4 - f3) == out.vertCount * 4 &&
                       baseOff + f4 <= size;
     parseChunkStream(data, size, baseOff + f0, 0, out.vertCount, out,
                      hasNrmPool ? data + baseOff + f3 : nullptr, nullptr,

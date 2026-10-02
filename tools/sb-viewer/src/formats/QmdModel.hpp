@@ -56,10 +56,16 @@ struct ParseOpts {
     int quadPerm = 0;               // index into kQuadPerms (default 0,1,2,3 = GPU order)
     int uvFlip = 0;                 // bit0 swap u/v, bit1 mirror u, bit2 mirror v
     int onlyPart = -1;              // complex: render only this part
-    bool storedNormals = true;
+    bool storedNormals = true;      // complex-block normal pools (verified)
+    bool simpleStoredNormals = false;  // simple-block f3..f4 pools (NOT normals
+                                       // for CMFANR00 - likely skinning data)
     int idxShift = 1;               // vertex/normal index downshift (stored x2)
     std::map<int, std::string> recSpecs;   // custom record layouts by type
     std::map<int, int> recSizeOverride;    // record size overrides by type
+    // pool-normal component remap, applied BEFORE the axis transform:
+    // index into kNrmPerms + per-component sign
+    int nrmPerm = 0;
+    int nrmSgn[3] = {1, 1, 1};
 };
 extern ParseOpts g_parseOpts;
 

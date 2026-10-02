@@ -82,9 +82,26 @@ LabPanel::LabPanel(QWidget* parent) : QWidget(parent) {
     m_idxShift->setRange(0, 3);
     m_idxShift->setValue(1);
     form->addRow("index shift (x2):", m_idxShift);
-    m_storedNormals = new QCheckBox("stored normals (tails/pools)", opts);
+    m_storedNormals = new QCheckBox("stored normals (complex pools)", opts);
     m_storedNormals->setChecked(true);
     form->addRow("shading:", m_storedNormals);
+    m_simpleStoredNormals = new QCheckBox("stored normals (simple f3..f4 pool)", opts);
+    m_simpleStoredNormals->setChecked(false);
+    form->addRow("", m_simpleStoredNormals);
+    m_nrmPerm = new QComboBox(opts);
+    m_nrmPerm->addItems({"(a,b,c)", "(a,c,b)", "(b,a,c)", "(b,c,a)", "(c,a,b)", "(c,b,a)"});
+    form->addRow("normals map:", m_nrmPerm);
+    {
+        auto* row = new QWidget(opts);
+        auto* rl = new QHBoxLayout(row);
+        rl->setContentsMargins(0, 0, 0, 0);
+        const char* nm[3] = {"-x", "-y", "-z"};
+        for (int i = 0; i < 3; ++i) {
+            m_nrmSgn[i] = new QCheckBox(nm[i], row);
+            rl->addWidget(m_nrmSgn[i]);
+        }
+        form->addRow("", row);
+    }
     m_textures = new QCheckBox("textures", opts);
     m_textures->setChecked(true);
     form->addRow("render:", m_textures);
@@ -172,6 +189,9 @@ LabPanel::LabPanel(QWidget* parent) : QWidget(parent) {
     connect(m_uvMirrorV, &QCheckBox::toggled, this, changed);
     connect(m_idxShift, &QSpinBox::valueChanged, this, changed);
     connect(m_storedNormals, &QCheckBox::toggled, this, changed);
+    connect(m_simpleStoredNormals, &QCheckBox::toggled, this, changed);
+    connect(m_nrmPerm, &QComboBox::currentIndexChanged, this, changed);
+    for (auto* cb : m_nrmSgn) connect(cb, &QCheckBox::toggled, this, changed);
     connect(m_textures, &QCheckBox::toggled, this, [this](bool on) { m_model->setTextures(on); });
     connect(m_wire, &QCheckBox::toggled, this, [this](bool on) { m_model->setWireframe(on); });
     connect(m_normals, &QCheckBox::toggled, this, [this](bool on) { m_model->setNormals(on); });
@@ -272,6 +292,10 @@ void LabPanel::reparse() {
                              (m_uvMirrorV->isChecked() ? 4 : 0);
     sb::g_parseOpts.idxShift = m_idxShift->value();
     sb::g_parseOpts.storedNormals = m_storedNormals->isChecked();
+    sb::g_parseOpts.simpleStoredNormals = m_simpleStoredNormals->isChecked();
+    sb::g_parseOpts.nrmPerm = m_nrmPerm->currentIndex();
+    for (int i = 0; i < 3; ++i)
+        sb::g_parseOpts.nrmSgn[i] = m_nrmSgn[i]->isChecked() ? -1 : 1;
     sb::g_parseOpts.onlyPart = -1;  // parts via the combo instead
 
     m_blocks = sb::parseQmdContainer(m_bytes.data(), m_bytes.size());
