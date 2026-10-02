@@ -31,6 +31,8 @@ struct QmdFace {
     bool hasNormals = false;
     uint8_t vc[4][3] = {};           // per-corner gouraud colors (types 0/1/4/5)
     bool hasVertColors = false;
+    uint8_t uv2[4][2] = {};          // per-corner second-uv layer (tail pool)
+    bool hasUv2 = false;
 };
 
 struct QmdBlock {

@@ -89,7 +89,7 @@ LabPanel::LabPanel(QWidget* parent) : QWidget(parent) {
     m_simpleStoredNormals->setChecked(false);
     form->addRow("", m_simpleStoredNormals);
     m_uvLayer = new QComboBox(opts);
-    m_uvLayer->addItems({"main (uvblk)", "second (tail pool, /16)"});
+    m_uvLayer->addItems({"main (uvblk)", "second (tail pool, /16)", "composite (main + second overlay)"});
     form->addRow("uv layer:", m_uvLayer);
     m_nrmSource = new QComboBox(opts);
     m_nrmSource->addItems({"auto (complex pools / simple geometric)",
@@ -317,6 +317,7 @@ void LabPanel::reparse() {
     sb::g_parseOpts.simpleStoredNormals = m_simpleStoredNormals->isChecked();
     sb::g_parseOpts.nrmSource = m_nrmSource->currentIndex();
     sb::g_parseOpts.uv2Mode = m_uvLayer->currentIndex();
+    m_model->setUv2Composite(m_uvLayer->currentIndex() == 2);
     sb::g_parseOpts.nrmIdxOffset = m_nrmIdxOff->value();
     sb::g_parseOpts.nrmByteSel = m_nrmByteSel->currentIndex();
     sb::g_parseOpts.nrmPerm = m_nrmPerm->currentIndex();

@@ -200,7 +200,7 @@ void ModelView::render() {
         float ymin = pts[0][1], ymax = pts[0][1];
         for (const auto& p : pts) { ymin = std::min(ymin, p[1]); ymax = std::max(ymax, p[1]); }
         for (int y = std::max(0, (int)ymin); y <= std::min(H - 1, (int)ymax); ++y) {
-            struct Span { float x0, z0, u0, v0, i0, r0, g0, b0; };
+            struct Span { float x0, z0, u0, v0, i0, r0, g0, b0, u20, v20; };
             std::vector<Span> xs;
             for (int i = 0; i < nv; ++i) {
                 const auto& pa = pts[i];
@@ -216,7 +216,9 @@ void ModelView::render() {
                                   intens[i] + t * (intens[j1] - intens[i]),
                                   f.vc[i][0] + t * (f.vc[j1][0] - f.vc[i][0]),
                                   f.vc[i][1] + t * (f.vc[j1][1] - f.vc[i][1]),
-                                  f.vc[i][2] + t * (f.vc[j1][2] - f.vc[i][2])});
+                                  f.vc[i][2] + t * (f.vc[j1][2] - f.vc[i][2]),
+                                  f.uv2[i][0] + t * (f.uv2[j1][0] - f.uv2[i][0]),
+                                  f.uv2[i][1] + t * (f.uv2[j1][1] - f.uv2[i][1])});
                 }
             }
             if (xs.size() != 2) continue;
@@ -241,6 +243,14 @@ void ModelView::render() {
                     uint8_t c4[4];
                     m_tex->sample(pageX + (int)u, pageY + (int)v, f.clut, c4);
                     if (c4[3] == 0) continue;  // transparent texel
+                    // composite second-uv detail layer (uv2Mode == 2)
+                    if (f.hasUv2 && (m_uv2Composite || (getenv("SB_UV2") && atoi(getenv("SB_UV2")) == 2))) {
+                        float u2 = xs[0].u20 + t * (xs[1].u20 - xs[0].u20);
+                        float v2 = xs[0].v20 + t * (xs[1].v20 - xs[0].v20);
+                        uint8_t c4b[4];
+                        m_tex->sample(pageX + (int)u2, pageY + (int)v2, f.clut, c4b);
+                        if (c4b[3]) { c4[0] = c4b[0]; c4[1] = c4b[1]; c4[2] = c4b[2]; }
+                    }
                     // PS1 texture modulation: texel * color/128, then light
                     auto mod = [&](int i, uint8_t mc) -> int {
                         return std::min(255, (int)(c4[i] * (mc / 128.0f) * I));

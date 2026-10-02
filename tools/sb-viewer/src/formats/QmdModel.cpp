@@ -272,19 +272,29 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                     }
                 }
             }
-            // display the tail-indexed second-uv pool instead of the main uv
-            if (g_parseOpts.uv2Mode && nrmPool && rv.v.count("n0")) {
+            // second-uv pool via tail indices (s16 x2, /16 fixed point)
+            if (nrmPool && rv.v.count("n0")) {
+                bool any2 = false;
                 for (int j = 0; j < n; ++j) {
                     int tj = isQuad ? pm[j] : tm[j];
                     int sraw = (int)(rv.v.at("n" + std::to_string(tj)) >> g_parseOpts.idxShift)
                                + g_parseOpts.nrmIdxOffset;
                     if (sraw < 0 || sraw >= (int)nrmSlots) continue;
                     if (s8normals) {
-                        face.uv[j][0] = (uint8_t)std::clamp(rds16(nrmPool + 4 * sraw) / 16, 0, 255);
-                        face.uv[j][1] = (uint8_t)std::clamp(rds16(nrmPool + 4 * sraw + 2) / 16, 0, 255);
+                        face.uv2[j][0] = (uint8_t)std::clamp(rds16(nrmPool + 4 * sraw) / 16, 0, 255);
+                        face.uv2[j][1] = (uint8_t)std::clamp(rds16(nrmPool + 4 * sraw + 2) / 16, 0, 255);
+                        any2 = true;
                     }
                 }
-                face.textured = true;
+                face.hasUv2 = any2;
+                // uv2Mode 1: show the second layer instead of the main uv
+                if (g_parseOpts.uv2Mode == 1 && any2) {
+                    for (int j = 0; j < n; ++j) {
+                        face.uv[j][0] = face.uv2[j][0];
+                        face.uv[j][1] = face.uv2[j][1];
+                    }
+                    face.textured = true;
+                }
             }
             // experimental uv transforms
             int fl = uvFlipMode();
