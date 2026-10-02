@@ -56,6 +56,10 @@ private:
     QCheckBox* m_baked = nullptr;
     QCheckBox* m_normals = nullptr;
     QCheckBox* m_simpleStoredNormals = nullptr;
+    QComboBox* m_nrmSource = nullptr;
+    QSpinBox* m_nrmIdxOff = nullptr;
+    QComboBox* m_nrmByteSel = nullptr;
+    QCheckBox* m_smoothGeo = nullptr;
     QComboBox* m_nrmPerm = nullptr;
     QCheckBox* m_nrmSgn[3] = {nullptr, nullptr, nullptr};
     QSpinBox* m_idxShift = nullptr;

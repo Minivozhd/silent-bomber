@@ -200,19 +200,25 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
             // normals: inline s8 triplets (nKa/nKb/nKc roles) or u16 pool
             // indices (n0..n3) — pool lookup only for gouraud types 8/9 with
             // default specs; custom specs are honored as written
-            bool poolNrm = nrmPool && g_parseOpts.storedNormals &&
-                           (custom || type == 8 || type == 9) && rv.v.count("n0");
+            bool poolNrm = nrmPool && rv.v.count("n0") &&
+                           (custom || type == 8 || type == 9) &&
+                           (g_parseOpts.nrmSource == 2 ||
+                                (g_parseOpts.nrmSource != 1 && g_parseOpts.storedNormals));
             if (poolNrm) {
                 face.hasNormals = true;
                 for (int j = 0; j < n; ++j) {
                     int tj = isQuad ? pm[j] : tm[j];
-                    uint32_t sidx = rv.v.at("n" + std::to_string(tj)) >> g_parseOpts.idxShift;
-                    if (sidx >= nrmSlots) { face.hasNormals = false; break; }
+                    int sraw = (int)(rv.v.at("n" + std::to_string(tj)) >> g_parseOpts.idxShift)
+                               + g_parseOpts.nrmIdxOffset;
+                    if (sraw < 0 || sraw >= (int)nrmSlots) { face.hasNormals = false; break; }
+                    uint32_t sidx = (uint32_t)sraw;
                     float nx, ny, nz;
                     if (s8normals) {
-                        nx = (int8_t)nrmPool[4 * sidx];
-                        ny = (int8_t)nrmPool[4 * sidx + 1];
-                        nz = (int8_t)nrmPool[4 * sidx + 2];
+                        static const int kSel[4][3] = {{0,1,2}, {0,1,3}, {0,2,3}, {1,2,3}};
+                        const int* bs = kSel[g_parseOpts.nrmByteSel & 3];
+                        nx = (int8_t)nrmPool[4 * sidx + bs[0]];
+                        ny = (int8_t)nrmPool[4 * sidx + bs[1]];
+                        nz = (int8_t)nrmPool[4 * sidx + bs[2]];
                     } else {
                         nx = rds16(nrmPool + 4 * sidx);
                         ny = rds16(nrmPool + 4 * sidx + 2);
@@ -382,7 +388,7 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
     out.regions.emplace_back(baseOff + f2, baseOff + f3, "y pool");
     if (f3 < f4 && baseOff + f4 <= size)
         out.regions.emplace_back(baseOff + f3, baseOff + f4, "extra/normals");
-    bool hasNrmPool = g_parseOpts.simpleStoredNormals &&
+    bool hasNrmPool = (g_parseOpts.simpleStoredNormals || g_parseOpts.nrmSource == 2) &&
                       (f3 < f4) && (f4 - f3) == out.vertCount * 4 &&
                       baseOff + f4 <= size;
     parseChunkStream(data, size, baseOff + f0, 0, out.vertCount, out,

@@ -25,6 +25,7 @@ public:
     // otherwise relight with the lambert approximation
     void setBaked(bool on) { m_baked = on; render(); }
     void setNormals(bool on) { normalsOn = on; render(); }
+    void setSmoothGeo(bool on) { m_smoothGeo = on; render(); }
     void setSelectedFace(int idx) { m_selFace = idx; render(); }
 
 protected:
@@ -38,9 +39,10 @@ private:
 
     std::vector<sb::QmdVertex> m_verts;
     std::vector<sb::QmdFace> m_faces;
+    std::vector<std::array<float,3>> m_avgNrm;  // per-vertex averaged geometric normals
     const sb::TextureBank* m_tex = nullptr;
     QImage m_img;
-    bool texturesOn = true, wireOn = false, m_baked = false, normalsOn = false;
+    bool texturesOn = true, wireOn = false, m_baked = false, normalsOn = false, m_smoothGeo = true;
     int m_selFace = -1;
     float m_yaw = 0.6f, m_pitch = -0.4f, m_zoom = 1.0f;
     void applyEnvCam();  // SB_YAW/SB_PITCH/SB_ZOOM overrides (headless shots)

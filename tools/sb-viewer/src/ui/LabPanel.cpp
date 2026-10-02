@@ -88,6 +88,20 @@ LabPanel::LabPanel(QWidget* parent) : QWidget(parent) {
     m_simpleStoredNormals = new QCheckBox("stored normals (simple f3..f4 pool)", opts);
     m_simpleStoredNormals->setChecked(false);
     form->addRow("", m_simpleStoredNormals);
+    m_nrmSource = new QComboBox(opts);
+    m_nrmSource->addItems({"auto (complex pools / simple geometric)",
+                           "geometric always",
+                           "force pools everywhere"});
+    form->addRow("normals source:", m_nrmSource);
+    m_smoothGeo = new QCheckBox("smooth geometric (avg per-vertex)", opts);
+    m_smoothGeo->setChecked(true);
+    form->addRow("", m_smoothGeo);
+    m_nrmIdxOff = new QSpinBox(opts);
+    m_nrmIdxOff->setRange(-64, 64);
+    form->addRow("normal idx offset:", m_nrmIdxOff);
+    m_nrmByteSel = new QComboBox(opts);
+    m_nrmByteSel->addItems({"bytes 0,1,2", "bytes 0,1,3", "bytes 0,2,3", "bytes 1,2,3"});
+    form->addRow("s8 pool bytes:", m_nrmByteSel);
     m_nrmPerm = new QComboBox(opts);
     m_nrmPerm->addItems({"(a,b,c)", "(a,c,b)", "(b,a,c)", "(b,c,a)", "(c,a,b)", "(c,b,a)"});
     form->addRow("normals map:", m_nrmPerm);
@@ -190,6 +204,10 @@ LabPanel::LabPanel(QWidget* parent) : QWidget(parent) {
     connect(m_idxShift, &QSpinBox::valueChanged, this, changed);
     connect(m_storedNormals, &QCheckBox::toggled, this, changed);
     connect(m_simpleStoredNormals, &QCheckBox::toggled, this, changed);
+    connect(m_nrmSource, &QComboBox::currentIndexChanged, this, changed);
+    connect(m_smoothGeo, &QCheckBox::toggled, this, [this](bool on) { m_model->setSmoothGeo(on); });
+    connect(m_nrmIdxOff, &QSpinBox::valueChanged, this, changed);
+    connect(m_nrmByteSel, &QComboBox::currentIndexChanged, this, changed);
     connect(m_nrmPerm, &QComboBox::currentIndexChanged, this, changed);
     for (auto* cb : m_nrmSgn) connect(cb, &QCheckBox::toggled, this, changed);
     connect(m_textures, &QCheckBox::toggled, this, [this](bool on) { m_model->setTextures(on); });
@@ -293,6 +311,9 @@ void LabPanel::reparse() {
     sb::g_parseOpts.idxShift = m_idxShift->value();
     sb::g_parseOpts.storedNormals = m_storedNormals->isChecked();
     sb::g_parseOpts.simpleStoredNormals = m_simpleStoredNormals->isChecked();
+    sb::g_parseOpts.nrmSource = m_nrmSource->currentIndex();
+    sb::g_parseOpts.nrmIdxOffset = m_nrmIdxOff->value();
+    sb::g_parseOpts.nrmByteSel = m_nrmByteSel->currentIndex();
     sb::g_parseOpts.nrmPerm = m_nrmPerm->currentIndex();
     for (int i = 0; i < 3; ++i)
         sb::g_parseOpts.nrmSgn[i] = m_nrmSgn[i]->isChecked() ? -1 : 1;

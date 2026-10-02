@@ -29,6 +29,30 @@ void ModelView::setModel(const std::vector<sb::QmdVertex>& verts,
     m_verts = verts;
     m_faces = faces;
     m_tex = tex;
+    // per-vertex averaged geometric normals (area-weighted); used for gouraud
+    // shading when the face has no stored normals. Sign is irrelevant (the
+    // shading is two-sided).
+    m_avgNrm.assign(m_verts.size(), {0, 0, 0});
+    for (const auto& f : m_faces) {
+        if (f.verts.size() < 3) continue;
+        const auto& a = m_verts[f.verts[0]];
+        for (size_t j = 1; j + 1 < f.verts.size(); ++j) {
+            const auto& b = m_verts[f.verts[j]];
+            const auto& c = m_verts[f.verts[j + 1]];
+            float ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+            float vx = c.x - b.x, vy = c.y - b.y, vz = c.z - b.z;
+            float nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+            for (uint32_t vi : f.verts) {
+                m_avgNrm[vi][0] += nx;
+                m_avgNrm[vi][1] += ny;
+                m_avgNrm[vi][2] += nz;
+            }
+        }
+    }
+    for (auto& n : m_avgNrm) {
+        float l = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (l > 1e-6f) { n[0] /= l; n[1] /= l; n[2] /= l; }
+    }
     render();
 }
 
@@ -133,6 +157,23 @@ void ModelView::render() {
         // stored per-corner normals (data, rotated into view space)
         float intens[4] = {lam, lam, lam, lam};
         if (kBaked && f.hasVertColors) { for (int k = 0; k < 4; ++k) intens[k] = 1.0f; }
+        if (!f.hasNormals && m_smoothGeo && nv <= (int)m_avgNrm.size()) {
+            // averaged per-vertex geometric normals -> smooth gouraud
+            static const float lx = 0.4f / 1.14f, ly = 0.8f / 1.14f, lz = 0.45f / 1.14f;
+            bool any = false;
+            for (int j = 0; j < nv; ++j) {
+                const auto& an = m_avgNrm[f.verts[j]];
+                if (an[0] == 0 && an[1] == 0 && an[2] == 0) continue;
+                any = true;
+                float x1 = an[0] * ca + an[2] * sa;
+                float z1 = -an[0] * sa + an[2] * ca;
+                float y2 = an[1] * cp - z1 * sp;
+                float z2 = an[1] * sp + z1 * cp;
+                float dot = std::fabs(x1 * lx + y2 * ly + z2 * lz);
+                intens[j] = std::max(0.3f, std::min(1.0f, dot * 0.75f + 0.3f));
+            }
+            (void)any;
+        }
         if (f.hasNormals) {
             static const float lx = 0.4f / 1.14f, ly = 0.8f / 1.14f, lz = 0.45f / 1.14f;
             for (int j = 0; j < nv; ++j) {

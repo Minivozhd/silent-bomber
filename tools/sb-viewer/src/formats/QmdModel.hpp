@@ -59,6 +59,11 @@ struct ParseOpts {
     bool storedNormals = true;      // complex-block normal pools (verified)
     bool simpleStoredNormals = false;  // simple-block f3..f4 pools (NOT normals
                                        // for CMFANR00 - likely skinning data)
+    int nrmSource = 0;       // 0 = auto (complex pools, simple geometric),
+                             // 1 = geometric always, 2 = force pools
+    int nrmIdxOffset = 0;    // added to tail normal indices before pool lookup
+    int nrmByteSel = 0;      // s8 pools: which 3 of 4 bytes are x,y,z:
+                             // 0 = 012, 1 = 013, 2 = 023, 3 = 123
     int idxShift = 1;               // vertex/normal index downshift (stored x2)
     std::map<int, std::string> recSpecs;   // custom record layouts by type
     std::map<int, int> recSizeOverride;    // record size overrides by type
