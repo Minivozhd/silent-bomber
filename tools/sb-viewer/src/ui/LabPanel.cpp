@@ -54,6 +54,7 @@ LabPanel::LabPanel(QWidget* parent) : QWidget(parent) {
         combo->addItems({"auto", "pair.a (x)", "pair.b", "pool.c"});
         rl->addWidget(combo, 1);
         auto* neg = new QCheckBox("neg", row);
+        if (i == 0) neg->setChecked(true);  // X negated by default
         rl->addWidget(neg);
         m_axes[i] = {combo, neg};
         form->addRow(QString("axis %1:").arg(axisNames[i]), row);
@@ -65,11 +66,11 @@ LabPanel::LabPanel(QWidget* parent) : QWidget(parent) {
             "2,0,1,3", "2,0,3,1", "2,1,0,3", "2,1,3,0", "2,3,0,1", "2,3,1,0",
             "3,0,1,2", "3,0,2,1", "3,1,0,2", "3,1,2,0", "3,2,0,1", "3,2,1,0 (reversed)"})
         m_quadPerm->addItem(q);
-    m_quadPerm->setCurrentIndex(23);
+    m_quadPerm->setCurrentIndex(0);
     form->addRow("quad corners:", m_quadPerm);
     m_triPerm = new QComboBox(opts);
     m_triPerm->addItems({"0,1,2", "0,2,1", "1,0,2", "1,2,0", "2,0,1", "2,1,0 (reversed)"});
-    m_triPerm->setCurrentIndex(5);
+    m_triPerm->setCurrentIndex(0);
     form->addRow("tri corners:", m_triPerm);
     m_uvSwap = new QCheckBox("swap u/v", opts);
     form->addRow("uv:", m_uvSwap);

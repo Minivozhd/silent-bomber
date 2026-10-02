@@ -51,10 +51,9 @@ struct QmdBlock {
 /// values for headless runs).
 struct ParseOpts {
     int axisSrc[3] = {-1, -1, -1};  // -1 = default (simple: a,c,b; complex: a,b,c)
-    int axisSgn[3] = {1, 1, 1};
-    int triPerm = 5;                // index into kTriPerms (default 2,1,0 = reversed
-                                    // winding -> outward geometric normals)
-    int quadPerm = 23;              // index into kQuadPerms (default 3,2,1,0, same)
+    int axisSgn[3] = {-1, 1, 1};    // X negated by default (verified visually)
+    int triPerm = 0;                // index into kTriPerms (default 0,1,2 = GPU order)
+    int quadPerm = 0;               // index into kQuadPerms (default 0,1,2,3 = GPU order)
     int uvFlip = 0;                 // bit0 swap u/v, bit1 mirror u, bit2 mirror v
     int onlyPart = -1;              // complex: render only this part
     bool storedNormals = true;
