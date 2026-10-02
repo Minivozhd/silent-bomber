@@ -28,8 +28,8 @@ Reference parser: `experiments/qmd_parse.py` (walks, renders, exports OBJ).
 +0x10  (simple) u32 f0  offset of section A (face chunks)   rel. to +0x10
 +0x14         u32 f1  offset of section B (vertices: s16 x, s16 z per vertex)
 +0x18         u32 f2  offset of section C (s16 y per vertex)
-+0x1C         u32 f3  offset of block end (next block = block + f3 + 0x10)
-+0x20         u32 f4  == f3 (duplicated)
++0x1C         u32 f3  offset of the extra section (== f4 when absent)
++0x20         u32 f4  offset of block end (next block = block + f4 + 0x10)
 +0x24         u32 f5  vertex count
 +0x28         u32 f6  offset to related (animation?) data [UNRESOLVED]
 +0x2C         u32 g0, g1                             [UNRESOLVED]
@@ -75,6 +75,14 @@ indices in the 8B tails of types 8/9 (u16 x2, per corner) are confirmed small
 and in-range; what they index in simple blocks is [UNRESOLVED] (complex blocks
 have explicit per-part normal pools, see below). Type 10/11 8B tails
 [UNRESOLVED].
+
+**Extra section (f3..f4)** — present when f3 < f4 [VERIFIED]:
+- blocks with gouraud-textured types 8/9: `vertCount x 4B` per-vertex normals
+  (s8 nx,ny,nz + pad), indexed by the record-tail nidx (u16 x2). Viewer uses
+  them for smooth shading (CMFANR00: 45 x 4B).
+- blocks with only flat textured types 10/11: `primCount x 4B` per-prim data
+  (mostly zeros; sparse 2 x s16 values ~4096-scale - likely face normals).
+  [PARTIALLY RESOLVED]
 
 Quads triangulate as `(v0,v1,v2)+(v1,v2,v3)` — GPU packet order; the polygon
 boundary is the zigzag `v0-v1-v3-v2`. [VERIFIED: convexity + 3D<->UV

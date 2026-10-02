@@ -10,6 +10,23 @@ void TextureBank::load(const uint8_t* data, size_t size) {
         if (parseTim(data + o, size - o, t))
             tims.push_back(std::move(t));
     }
+    // global VRAM palette memory (1024 x 512 halfwords): CLUTs are shared
+    // between TIMs (e.g. CMFANR00's faces sample TIM6's image with TIM7-9's
+    // palette), so they must be addressable globally, not per-TIM.
+    clutMem.assign(1024 * 512, 0);
+    clutValid.assign(1024 * 512, 0);
+    for (const auto& t : tims) {
+        if (t.clut.empty() || t.clutW == 0 || t.clutH == 0) continue;
+        for (int y = 0; y < t.clutH; ++y) {
+            for (int x = 0; x < t.clutW; ++x) {
+                int gx = t.clutX + x, gy = t.clutY + y;
+                if (gx >= 1024 || gy >= 512) continue;
+                size_t dst = (size_t)gy * 1024 + gx;
+                clutMem[dst] = t.clut[(size_t)y * t.clutW + x];
+                clutValid[dst] = 1;
+            }
+        }
+    }
 }
 
 const TimImage* TextureBank::pageAt(int xHw, int y) const {
@@ -51,13 +68,14 @@ void TextureBank::sample(int xPx, int y, uint16_t clutWord, uint8_t out[4]) cons
         else
             idx = (word >> ((relX % 2) * 8)) & 0xFF;
         if (idx == 0) return;
-        // palette entry: face clut word (y at bits 6..15 lines, x at 0..5 in
-        // 16-color units) relative to the TIM's clut rect (clutX in halfwords)
-        int clutLine = ((clutWord >> 6) & 0x3FF) - t.clutY;
-        int colIdx = (clutWord & 0x3F) * 16 + idx - t.clutX;
-        size_t palette = (size_t)clutLine * t.clutW + colIdx;
-        if (clutLine < 0 || colIdx < 0 || palette >= t.clut.size()) return;
-        rgb555(t.clut[palette], out[0], out[1], out[2]);
+        // palette: global VRAM CLUT memory — face cba addresses it directly
+        // (x in 16-color units, y in lines), independent of the image's TIM
+        int clutY = (clutWord >> 6) & 0x1FF;
+        int clutX = (clutWord & 0x3F) * 16 + idx;
+        if (clutY >= 512 || clutX >= 1024) return;
+        size_t pal = (size_t)clutY * 1024 + clutX;
+        if (!clutValid[pal]) return;
+        rgb555(clutMem[pal], out[0], out[1], out[2]);
         out[3] = 255;
         return;
     }

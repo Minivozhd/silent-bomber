@@ -155,7 +155,7 @@ void ModelView::render() {
         float ymin = pts[0][1], ymax = pts[0][1];
         for (const auto& p : pts) { ymin = std::min(ymin, p[1]); ymax = std::max(ymax, p[1]); }
         for (int y = std::max(0, (int)ymin); y <= std::min(H - 1, (int)ymax); ++y) {
-            struct Span { float x0, z0, u0, v0, i0, x1, z1, u1, v1, i1; };
+            struct Span { float x0, z0, u0, v0, i0, r0, g0, b0, x1, z1, u1, v1, i1, r1, g1, b1; };
             std::vector<Span> xs;
             for (int i = 0; i < nv; ++i) {
                 const auto& pa = pts[i];
@@ -164,11 +164,15 @@ void ModelView::render() {
                     float t = (y - pa[1]) / (pb[1] - pa[1] + 1e-12f);
                     float ua = f.uv[i][0], va = f.uv[i][1];
                     float ub = f.uv[(i + 1) % nv][0], vb = f.uv[(i + 1) % nv][1];
+                    int j1 = (i + 1) % nv;
                     xs.push_back({pa[0] + t * (pb[0] - pa[0]),
                                   pa[2] + t * (pb[2] - pa[2]),
                                   ua + t * (ub - ua), va + t * (vb - va),
-                                  intens[i] + t * (intens[(i + 1) % nv] - intens[i]),
-                                  0, 0, 0, 0, 0});
+                                  intens[i] + t * (intens[j1] - intens[i]),
+                                  f.vc[i][0] + t * (f.vc[j1][0] - f.vc[i][0]),
+                                  f.vc[i][1] + t * (f.vc[j1][1] - f.vc[i][1]),
+                                  f.vc[i][2] + t * (f.vc[j1][2] - f.vc[i][2]),
+                                  0, 0, 0, 0, 0, 0, 0, 0});
                 }
             }
             if (xs.size() != 2) continue;
@@ -179,9 +183,14 @@ void ModelView::render() {
                 float z = xs[0].z0 + t * (xs[1].z0 - xs[0].z0);
                 float I = xs[0].i0 + t * (xs[1].i0 - xs[0].i0);
                 if (!tex) {
-                    put(x, y, z, qRgb(std::min(255, (int)(f.r * I)),
-                                      std::min(255, (int)(f.g * I)),
-                                      std::min(255, (int)(f.b * I))));
+                    // per-corner gouraud colors when present; the game relights
+                    // via GTE (light range ~x2), so boost
+                    float cr = f.hasVertColors ? xs[0].r0 + t * (xs[0].r1 - xs[0].r0) : f.r;
+                    float cg = f.hasVertColors ? xs[0].g0 + t * (xs[0].g1 - xs[0].g0) : f.g;
+                    float cb = f.hasVertColors ? xs[0].b0 + t * (xs[0].b1 - xs[0].b0) : f.b;
+                    put(x, y, z, qRgb(std::min(255, (int)(cr * I * 1.8f)),
+                                      std::min(255, (int)(cg * I * 1.8f)),
+                                      std::min(255, (int)(cb * I * 1.8f))));
                 } else {
                     float u = xs[0].u0 + t * (xs[1].u0 - xs[0].u0);
                     float v = xs[0].v0 + t * (xs[1].v0 - xs[0].v0);

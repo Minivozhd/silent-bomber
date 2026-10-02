@@ -23,6 +23,12 @@ struct TextureBank {
     };
     std::vector<TimImage> tims;
 
+    // Global VRAM palette memory (1024 x 512 halfwords): every TIM's CLUT
+    // block is written at its (clutX, clutY) rect; faces address colors by
+    // (cba.x*16 + idx, cba.y) regardless of which TIM uploaded them.
+    std::vector<uint16_t> clutMem;
+    std::vector<uint8_t> clutValid;
+
     void load(const uint8_t* data, size_t size);
 
     /// Finds the TIM whose image rect contains halfword (x, y), or nullptr.

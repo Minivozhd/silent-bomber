@@ -25,6 +25,8 @@ struct QmdFace {
     uint16_t clut = 0, tpage = 0;    // GPU words
     float n[4][3] = {};              // stored per-corner normals (s8, normalized)
     bool hasNormals = false;
+    uint8_t vc[4][3] = {};           // per-corner gouraud colors (types 0/1/4/5)
+    bool hasVertColors = false;
 };
 
 struct QmdBlock {

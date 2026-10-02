@@ -82,7 +82,8 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                              uint32_t vbase, uint32_t vcount, QmdBlock& out,
                              const uint8_t* nrmPool = nullptr,
                              const uint8_t* f4Pool = nullptr,
-                             uint32_t nrmSlots = 0) {
+                             uint32_t nrmSlots = 0,
+                             bool s8normals = false) {
     while (p + 4 <= size) {
         uint16_t count = rd16(data + p), type = rd16(data + p + 2);
         if (count == 0 && type == 0) break;
@@ -104,6 +105,17 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
             if (face.verts.empty()) continue;
             face.textured = (type >= 8);
             bool isQuad = (n == 4);
+            // per-corner gouraud colors for the untextured types
+            int vcOff = (type == 0) ? 20 : (type == 1) ? 16 : (type == 4) ? 8 : (type == 5) ? 6 : -1;
+            if (vcOff >= 0) {
+                face.hasVertColors = true;
+                for (int j = 0; j < n; ++j) {
+                    int tj = isQuad ? pm[j] : j;
+                    face.vc[j][0] = r[vcOff + 4 * tj];
+                    face.vc[j][1] = r[vcOff + 4 * tj + 1];
+                    face.vc[j][2] = r[vcOff + 4 * tj + 2];
+                }
+            }
             // stored per-corner normals for the untextured types (s8 x3, normalized)
             if (type == 0 || type == 2) {          // [8B idx][12B: 4x3 normals][...]
                 face.hasNormals = true;
@@ -146,15 +158,25 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
             // indices x2 into the part's normal pool; normal = (nrm.s16lo,
             // nrm.s16hi, f4.s16) / 4096 [VERIFIED: avg |dot| with adjacent-face
             // geometric normals = 0.997 on EMBTNK00 part4]
-            if ((type == 8 || type == 9) && nrmPool && f4Pool) {
+            if ((type == 8 || type == 9) && nrmPool) {
                 int nn = (type == 8) ? 4 : 3;
                 face.hasNormals = true;
                 for (int j = 0; j < nn; ++j) {
                     uint32_t s = vidx(r + rs - 8, j);
                     if (s >= nrmSlots) { face.hasNormals = false; break; }
-                    float nx = rds16(nrmPool + 4 * s);
-                    float ny = rds16(nrmPool + 4 * s + 2);
-                    float nz = rds16(f4Pool + 2 * s);
+                    float nx, ny, nz;
+                    if (s8normals) {
+                        // simple blocks: 4B per vertex = s8 nx,ny,nz + pad
+                        nx = (int8_t)nrmPool[4 * s];
+                        ny = (int8_t)nrmPool[4 * s + 1];
+                        nz = (int8_t)nrmPool[4 * s + 2];
+                    } else {
+                        // complex blocks: 12-bit fixed (nx=nrm.lo, ny=nrm.hi,
+                        // nz=f4 slot), unit length 4096
+                        nx = rds16(nrmPool + 4 * s);
+                        ny = rds16(nrmPool + 4 * s + 2);
+                        nz = rds16(f4Pool + 2 * s);
+                    }
                     float l = std::sqrt(nx * nx + ny * ny + nz * nz);
                     if (l > 1e-6f) { face.n[j][0] = nx / l; face.n[j][1] = ny / l; face.n[j][2] = nz / l; }
                 }
@@ -176,7 +198,10 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                     face.verts[j] = q.verts[cyc[j]];
                     face.uv[j][0] = q.uv[cyc[j]][0];
                     face.uv[j][1] = q.uv[cyc[j]][1];
-                    for (int a = 0; a < 3; ++a) face.n[j][a] = q.n[cyc[j]][a];
+                    for (int a = 0; a < 3; ++a) {
+                        face.n[j][a] = q.n[cyc[j]][a];
+                        face.vc[j][a] = q.vc[cyc[j]][a];
+                    }
                 }
             }
             out.faces.push_back(std::move(face));
@@ -256,6 +281,8 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
     uint32_t f0 = rd32(base + 0x00);  // section A (face chunks)
     uint32_t f1 = rd32(base + 0x04);  // section B (x,z pairs)
     uint32_t f2 = rd32(base + 0x08);  // section C (y)
+    uint32_t f3 = rd32(base + 0x0C);  // section D (per-vertex s8 normals) or end
+    uint32_t f4 = rd32(base + 0x10);  // block end
     out.vertCount = rd32(base + 0x14);
 
     // vertices: B = n x (s16 x, s16 z), C = n x s16 y
@@ -273,7 +300,13 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
         out.verts.push_back(v);
     }
 
-    parseChunkStream(data, size, baseOff + f0, 0, out.vertCount, out);
+    // textured-gouraud blocks carry a per-vertex s8 normal pool between
+    // sections D..end, indexed by the record-tail nidx of types 8/9
+    bool hasNrmPool = (f3 < f4) && (f4 - f3) == out.vertCount * 4 &&
+                      baseOff + f4 <= size;
+    parseChunkStream(data, size, baseOff + f0, 0, out.vertCount, out,
+                     hasNrmPool ? data + baseOff + f3 : nullptr, nullptr,
+                     out.vertCount, /*s8normals=*/true);
 }
 
 std::vector<QmdBlock> parseQmdContainer(const uint8_t* data, size_t size) {
