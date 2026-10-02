@@ -83,13 +83,15 @@ per-corner indices into the part's normal pool (dot 0.997). Type 10/11 8B tails
 [UNRESOLVED].
 
 **Extra section (f3..f4)** — present when f3 < f4 [VERIFIED]:
-- blocks with gouraud-textured types 8/9: `vertCount x 4B` per-vertex data,
-  indexed by the record-tail nidx (u16 x2). [NOT normals — likely skinning:
-  mirror-symmetric verts share IDENTICAL entries (weights should mirror,
-  normals must too — they don't); byte pattern (large, small, large, small)
-  resembles (weight, bone, weight, bone). For complex blocks the analogous
-  pools ARE normals (verified, dot 0.997)] The viewer uses geometric normals
-  for simple blocks by default (lab toggle re-enables the pool).
+- blocks with gouraud-textured types 8/9: `vertCount x 4B` per-vertex
+  SECOND UV coordinates: 2 x s16 fixed point (value/16 = texel), indexed by
+  the record-tail nidx (u16 x2). [VERIFIED 2026-10-02: values/16 cover 0..255;
+  mirror-symmetric verts get mirror-identical UVs; rendering the face with
+  this pool shows the symmetric hair/brows/lashes detail layer on top of the
+  skin — the character face is two-layer textured: skin via uvblk, dark hair
+  details via the tail pool] The lab has a "uv layer: main/second" switch.
+  For complex blocks the analogous pools are per-vertex normals (verified,
+  dot 0.997) — the tail roles serve different pool semantics per family.
 - blocks with only flat textured types 10/11: `primCount x 4B` per-prim data
   (mostly zeros; sparse 2 x s16 values ~4096-scale - likely face normals).
   [PARTIALLY RESOLVED]

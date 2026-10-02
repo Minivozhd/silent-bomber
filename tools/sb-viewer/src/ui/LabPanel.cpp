@@ -88,6 +88,9 @@ LabPanel::LabPanel(QWidget* parent) : QWidget(parent) {
     m_simpleStoredNormals = new QCheckBox("stored normals (simple f3..f4 pool)", opts);
     m_simpleStoredNormals->setChecked(false);
     form->addRow("", m_simpleStoredNormals);
+    m_uvLayer = new QComboBox(opts);
+    m_uvLayer->addItems({"main (uvblk)", "second (tail pool, /16)"});
+    form->addRow("uv layer:", m_uvLayer);
     m_nrmSource = new QComboBox(opts);
     m_nrmSource->addItems({"auto (complex pools / simple geometric)",
                            "geometric always",
@@ -205,6 +208,7 @@ LabPanel::LabPanel(QWidget* parent) : QWidget(parent) {
     connect(m_storedNormals, &QCheckBox::toggled, this, changed);
     connect(m_simpleStoredNormals, &QCheckBox::toggled, this, changed);
     connect(m_nrmSource, &QComboBox::currentIndexChanged, this, changed);
+    connect(m_uvLayer, &QComboBox::currentIndexChanged, this, changed);
     connect(m_smoothGeo, &QCheckBox::toggled, this, [this](bool on) { m_model->setSmoothGeo(on); });
     connect(m_nrmIdxOff, &QSpinBox::valueChanged, this, changed);
     connect(m_nrmByteSel, &QComboBox::currentIndexChanged, this, changed);
@@ -312,6 +316,7 @@ void LabPanel::reparse() {
     sb::g_parseOpts.storedNormals = m_storedNormals->isChecked();
     sb::g_parseOpts.simpleStoredNormals = m_simpleStoredNormals->isChecked();
     sb::g_parseOpts.nrmSource = m_nrmSource->currentIndex();
+    sb::g_parseOpts.uv2Mode = m_uvLayer->currentIndex();
     sb::g_parseOpts.nrmIdxOffset = m_nrmIdxOff->value();
     sb::g_parseOpts.nrmByteSel = m_nrmByteSel->currentIndex();
     sb::g_parseOpts.nrmPerm = m_nrmPerm->currentIndex();

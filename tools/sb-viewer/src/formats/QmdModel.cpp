@@ -58,6 +58,7 @@ static bool initParseOpts() {
     if (const char* e = getenv("SB_UVFLIP")) g_parseOpts.uvFlip = atoi(e);
     if (const char* e = getenv("SB_PART")) g_parseOpts.onlyPart = atoi(e);
     if (getenv("SB_NONRM")) g_parseOpts.storedNormals = false;
+    if (getenv("SB_UV2")) g_parseOpts.uv2Mode = atoi(getenv("SB_UV2"));
     if (const char* e = getenv("SB_AXES")) {
         // "a,c,b" with optional '-' sign prefix per component
         int idx = 0;
@@ -271,6 +272,20 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                     }
                 }
             }
+            // display the tail-indexed second-uv pool instead of the main uv
+            if (g_parseOpts.uv2Mode && nrmPool && rv.v.count("n0")) {
+                for (int j = 0; j < n; ++j) {
+                    int tj = isQuad ? pm[j] : tm[j];
+                    int sraw = (int)(rv.v.at("n" + std::to_string(tj)) >> g_parseOpts.idxShift)
+                               + g_parseOpts.nrmIdxOffset;
+                    if (sraw < 0 || sraw >= (int)nrmSlots) continue;
+                    if (s8normals) {
+                        face.uv[j][0] = (uint8_t)std::clamp(rds16(nrmPool + 4 * sraw) / 16, 0, 255);
+                        face.uv[j][1] = (uint8_t)std::clamp(rds16(nrmPool + 4 * sraw + 2) / 16, 0, 255);
+                    }
+                }
+                face.textured = true;
+            }
             // experimental uv transforms
             int fl = uvFlipMode();
             if (fl && face.textured) {
@@ -388,8 +403,8 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
     out.regions.emplace_back(baseOff + f2, baseOff + f3, "y pool");
     if (f3 < f4 && baseOff + f4 <= size)
         out.regions.emplace_back(baseOff + f3, baseOff + f4, "extra/normals");
-    bool hasNrmPool = (g_parseOpts.simpleStoredNormals || g_parseOpts.nrmSource == 2) &&
-                      (f3 < f4) && (f4 - f3) == out.vertCount * 4 &&
+    // always pass the f3..f4 pool when present; use-sites gate on flags
+    bool hasNrmPool = (f3 < f4) && (f4 - f3) == out.vertCount * 4 &&
                       baseOff + f4 <= size;
     parseChunkStream(data, size, baseOff + f0, 0, out.vertCount, out,
                      hasNrmPool ? data + baseOff + f3 : nullptr, nullptr,
