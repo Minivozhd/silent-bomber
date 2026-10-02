@@ -83,9 +83,12 @@ per-corner indices into the part's normal pool (dot 0.997). Type 10/11 8B tails
 [UNRESOLVED].
 
 **Extra section (f3..f4)** — present when f3 < f4 [VERIFIED]:
-- blocks with gouraud-textured types 8/9: `vertCount x 4B` per-vertex normals
-  (s8 nx,ny,nz + pad), indexed by the record-tail nidx (u16 x2). Viewer uses
-  them for smooth shading (CMFANR00: 45 x 4B).
+- blocks with gouraud-textured types 8/9: `vertCount x 4B` per-vertex data,
+  indexed by the record-tail nidx (u16 x2). [UNRESOLVED what it is: for
+  CMFANR00 the s8x3 readings correlate with geometric normals at best ~0.6 and
+  not at all with radial head normals (~0.09) — likely skinning/bone data, NOT
+  vertex normals; it still works well as smoothing input for shading. For
+  complex blocks the analogous pools ARE normals (verified, dot 0.997)]
 - blocks with only flat textured types 10/11: `primCount x 4B` per-prim data
   (mostly zeros; sparse 2 x s16 values ~4096-scale - likely face normals).
   [PARTIALLY RESOLVED]

@@ -45,12 +45,15 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
 // only convex boundary, and the 3D<->UV edge-ratio variance is minimal for the
 // identity mapping). SB_QPERM allows A/B testing of alternate interpretations.
 static const int kQuadPerms[][4] = {
-    {0, 1, 2, 3}, {3, 2, 0, 1}, {2, 0, 1, 3}, {3, 1, 0, 2}, {2, 3, 1, 0}, {1, 3, 2, 0},
+    {0, 1, 2, 3}, {0, 1, 3, 2}, {0, 2, 1, 3}, {0, 2, 3, 1}, {0, 3, 1, 2}, {0, 3, 2, 1},
+    {1, 0, 2, 3}, {1, 0, 3, 2}, {1, 2, 0, 3}, {1, 2, 3, 0}, {1, 3, 0, 2}, {1, 3, 2, 0},
+    {2, 0, 1, 3}, {2, 0, 3, 1}, {2, 1, 0, 3}, {2, 1, 3, 0}, {2, 3, 0, 1}, {2, 3, 1, 0},
+    {3, 0, 1, 2}, {3, 0, 2, 1}, {3, 1, 0, 2}, {3, 1, 2, 0}, {3, 2, 0, 1}, {3, 2, 1, 0},
 };
 ParseOpts g_parseOpts;
 
 static bool initParseOpts() {
-    if (const char* e = getenv("SB_QPERM")) g_parseOpts.quadPerm = std::clamp(atoi(e), 0, 5);
+    if (const char* e = getenv("SB_QPERM")) g_parseOpts.quadPerm = std::clamp(atoi(e), 0, 23);
     if (const char* e = getenv("SB_TRIPERM")) g_parseOpts.triPerm = std::clamp(atoi(e), 0, 5);
     if (const char* e = getenv("SB_UVFLIP")) g_parseOpts.uvFlip = atoi(e);
     if (const char* e = getenv("SB_PART")) g_parseOpts.onlyPart = atoi(e);

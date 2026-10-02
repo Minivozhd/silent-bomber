@@ -59,7 +59,12 @@ LabPanel::LabPanel(QWidget* parent) : QWidget(parent) {
         form->addRow(QString("axis %1:").arg(axisNames[i]), row);
     }
     m_quadPerm = new QComboBox(opts);
-    m_quadPerm->addItems({"0,1,2,3 (GPU order)", "3,2,0,1", "2,0,1,3", "3,1,0,2", "2,3,1,0", "1,3,2,0"});
+    for (const char* q : {
+            "0,1,2,3 (GPU order)", "0,1,3,2", "0,2,1,3", "0,2,3,1", "0,3,1,2", "0,3,2,1",
+            "1,0,2,3", "1,0,3,2", "1,2,0,3", "1,2,3,0", "1,3,0,2", "1,3,2,0",
+            "2,0,1,3", "2,0,3,1", "2,1,0,3", "2,1,3,0", "2,3,0,1", "2,3,1,0",
+            "3,0,1,2", "3,0,2,1", "3,1,0,2", "3,1,2,0", "3,2,0,1", "3,2,1,0 (reversed)"})
+        m_quadPerm->addItem(q);
     form->addRow("quad corners:", m_quadPerm);
     m_triPerm = new QComboBox(opts);
     m_triPerm->addItems({"0,1,2", "0,2,1", "1,0,2", "1,2,0", "2,0,1", "2,1,0"});
