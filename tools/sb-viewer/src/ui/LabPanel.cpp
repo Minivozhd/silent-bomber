@@ -65,9 +65,11 @@ LabPanel::LabPanel(QWidget* parent) : QWidget(parent) {
             "2,0,1,3", "2,0,3,1", "2,1,0,3", "2,1,3,0", "2,3,0,1", "2,3,1,0",
             "3,0,1,2", "3,0,2,1", "3,1,0,2", "3,1,2,0", "3,2,0,1", "3,2,1,0 (reversed)"})
         m_quadPerm->addItem(q);
+    m_quadPerm->setCurrentIndex(23);
     form->addRow("quad corners:", m_quadPerm);
     m_triPerm = new QComboBox(opts);
-    m_triPerm->addItems({"0,1,2", "0,2,1", "1,0,2", "1,2,0", "2,0,1", "2,1,0"});
+    m_triPerm->addItems({"0,1,2", "0,2,1", "1,0,2", "1,2,0", "2,0,1", "2,1,0 (reversed)"});
+    m_triPerm->setCurrentIndex(5);
     form->addRow("tri corners:", m_triPerm);
     m_uvSwap = new QCheckBox("swap u/v", opts);
     form->addRow("uv:", m_uvSwap);
