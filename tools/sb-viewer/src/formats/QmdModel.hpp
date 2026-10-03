@@ -59,8 +59,8 @@ struct ParseOpts {
     int uvFlip = 0;                 // bit0 swap u/v, bit1 mirror u, bit2 mirror v
     int onlyPart = -1;              // complex: render only this part
     bool storedNormals = true;      // complex-block normal pools (verified)
-    bool simpleStoredNormals = false;  // simple-block f3..f4 pools (NOT normals
-                                       // for CMFANR00 - likely skinning data)
+    bool simpleStoredNormals = true;   // simple-block f3..f4 pools: 2 x s16
+                                       // (nx, ny) 12-bit + reconstructed nz
     int nrmSource = 0;       // 0 = auto (complex pools, simple geometric),
                              // 1 = geometric always, 2 = force pools
     int nrmIdxOffset = 0;    // added to tail normal indices before pool lookup
@@ -68,6 +68,12 @@ struct ParseOpts {
                              // tail-indexed second-uv pool (s16 x2 / 16)
     int nrmByteSel = 0;      // s8 pools: which 3 of 4 bytes are x,y,z:
                              // 0 = 012, 1 = 013, 2 = 023, 3 = 123
+    int nrmNzSource = 0;     // 2xs16 pools provide only (nx, ny); nz from:
+                             // 0 = sqrt(4096^2-nx^2-ny^2) positive
+                             // 1 = same, negative
+                             // 2 = the y pool (2B/vertex) at the tail index
+                             // 3 = zero
+                             // (the game's nccs path loads nz from a 2B pool)
     int idxShift = 1;               // vertex/normal index downshift (stored x2)
     std::map<int, std::string> recSpecs;   // custom record layouts by type
     std::map<int, int> recSizeOverride;    // record size overrides by type

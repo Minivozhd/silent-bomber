@@ -59,6 +59,8 @@ static bool initParseOpts() {
     if (const char* e = getenv("SB_PART")) g_parseOpts.onlyPart = atoi(e);
     if (getenv("SB_NONRM")) g_parseOpts.storedNormals = false;
     if (getenv("SB_UV2")) g_parseOpts.uv2Mode = atoi(getenv("SB_UV2"));
+    if (getenv("SB_NZSRC")) g_parseOpts.nrmNzSource = atoi(getenv("SB_NZSRC"));
+    if (getenv("SB_SIMPLE_NRM")) g_parseOpts.simpleStoredNormals = true;
     if (const char* e = getenv("SB_AXES")) {
         // "a,c,b" with optional '-' sign prefix per component
         int idx = 0;
@@ -215,11 +217,17 @@ static void parseChunkStream(const uint8_t* data, size_t size, size_t p,
                     uint32_t sidx = (uint32_t)sraw;
                     float nx, ny, nz;
                     if (s8normals) {
-                        static const int kSel[4][3] = {{0,1,2}, {0,1,3}, {0,2,3}, {1,2,3}};
-                        const int* bs = kSel[g_parseOpts.nrmByteSel & 3];
-                        nx = (int8_t)nrmPool[4 * sidx + bs[0]];
-                        ny = (int8_t)nrmPool[4 * sidx + bs[1]];
-                        nz = (int8_t)nrmPool[4 * sidx + bs[2]];
+                        // 4B entry = 2 x s16 (nx, ny), 12-bit fixed point
+                        nx = rds16(nrmPool + 4 * sidx);
+                        ny = rds16(nrmPool + 4 * sidx + 2);
+                        float r2 = 4096.0f * 4096.0f - nx * nx - ny * ny;
+                        float sq = r2 > 0 ? std::sqrt(r2) : 0.0f;
+                        switch (g_parseOpts.nrmNzSource) {
+                            case 1: nz = -sq; break;
+                            case 2: nz = f4Pool ? rds16(f4Pool + 2 * sidx) : 0; break;
+                            case 3: nz = 0; break;
+                            default: nz = sq; break;
+                        }
                     } else {
                         nx = rds16(nrmPool + 4 * sidx);
                         ny = rds16(nrmPool + 4 * sidx + 2);
@@ -417,7 +425,8 @@ static void parseSimpleBlock(const uint8_t* data, size_t size, size_t boff, QmdB
     bool hasNrmPool = (f3 < f4) && (f4 - f3) == out.vertCount * 4 &&
                       baseOff + f4 <= size;
     parseChunkStream(data, size, baseOff + f0, 0, out.vertCount, out,
-                     hasNrmPool ? data + baseOff + f3 : nullptr, nullptr,
+                     hasNrmPool ? data + baseOff + f3 : nullptr,
+                     data + baseOff + f2,
                      out.vertCount, /*s8normals=*/true, &ax);
 }
 

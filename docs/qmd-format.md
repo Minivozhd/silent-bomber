@@ -84,14 +84,14 @@ per-corner indices into the part's normal pool (dot 0.997). Type 10/11 8B tails
 
 **Extra section (f3..f4)** — present when f3 < f4 [VERIFIED]:
 - blocks with gouraud-textured types 8/9: `vertCount x 4B` per-vertex
-  SECOND UV coordinates: 2 x s16 fixed point (value/16 = texel), indexed by
-  the record-tail nidx (u16 x2). [VERIFIED 2026-10-02: values/16 cover 0..255;
-  mirror-symmetric verts get mirror-identical UVs; rendering the face with
-  this pool shows the symmetric hair/brows/lashes detail layer on top of the
-  skin — the character face is two-layer textured: skin via uvblk, dark hair
-  details via the tail pool] The lab has a "uv layer: main/second" switch.
-  For complex blocks the analogous pools are per-vertex normals (verified,
-  dot 0.997) — the tail roles serve different pool semantics per family.
+  NORMALS: 2 x s16 (nx, ny) in 12-bit fixed point, indexed by the record-tail
+  nidx (u16 x2); nz is reconstructed as sqrt(4096^2 - nx^2 - ny^2) (the game's
+  nccs path loads the 4B entry into GTE VXY0 and the third component from a
+  2B-per-vertex pool). [VERIFIED 2026-10-03: CMFANR00 renders with smooth
+  correct shading; mirror verts share normal entries]
+  (an earlier "second UV layer" reading was disproven by the disassembly)
+  For complex blocks the pools are per-vertex normals too, split as
+  (nx=nrm.s16lo, ny=nrm.s16hi, nz=f4.s16). [VERIFIED dot 0.997]
 - blocks with only flat textured types 10/11: `primCount x 4B` per-prim data
   (mostly zeros; sparse 2 x s16 values ~4096-scale - likely face normals).
   [PARTIALLY RESOLVED]
